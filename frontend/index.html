@@ -10,6 +10,57 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="app.js"></script>
+    <style>
+        /* Additional styles */
+        .client-id-short {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .master-badge {
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            border: 2px solid #ffc107;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .master-badge h4 {
+            color: #856404;
+            margin-bottom: 5px;
+        }
+        
+        .master-badge p {
+            color: #856404;
+            margin: 3px 0;
+            font-size: 14px;
+        }
+        
+        .client-card.master {
+            border: 2px solid #ffc107;
+            background: #fff9e6;
+        }
+        
+        .client-avatar.master {
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            color: #856404;
+        }
+        
+        .audio-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #856404;
+        }
+        
+        .audio-warning i {
+            color: #ffc107;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -31,15 +82,15 @@
                     }"></i>
                     <span x-text="serverStatusText"></span>
                 </div>
-                <div class="client-id" x-show="clientId">
+                <div class="client-id" x-show="clientShortId">
                     <i class="fas fa-id-card"></i>
-                    <span>ID: <span x-text="clientIdShort"></span></span>
+                    <span>ID: <span class="client-id-short" x-text="clientShortId"></span></span>
                 </div>
             </div>
         </header>
 
         <!-- Master Control Panel -->
-        <section class="master-control-panel" x-show="clientId">
+        <section class="master-control-panel" x-show="clientShortId">
             <div class="panel-header">
                 <h3><i class="fas fa-crown"></i> Kontrol Master</h3>
                 <div class="client-count">
@@ -52,15 +103,29 @@
                 <div x-show="!isMaster" class="master-request">
                     <div class="master-info">
                         <i class="fas fa-info-circle"></i>
-                        <p>Status: <strong>Client Biasa</strong> - Anda dapat mengirim teks, tetapi hanya Master yang memutar audio.</p>
+                        <p>
+                            Status: <strong>Client Biasa</strong> - 
+                            <span x-show="masterShortId">
+                                Master aktif: <strong x-text="masterShortId"></strong>. Anda dapat mengirim teks ke master.
+                            </span>
+                            <span x-show="!masterShortId">
+                                Tidak ada master aktif. Silakan jadikan diri Anda master atau tunggu.
+                            </span>
+                        </p>
                     </div>
                     <button @click="requestMasterRole()" 
-                            :disabled="isRequestingMaster || isMaster" 
+                            :disabled="isRequestingMaster || isMaster || masterShortId" 
                             class="btn btn-success btn-master">
                         <i class="fas fa-crown"></i>
                         <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
                     </button>
-                    <p class="hint">* Master akan menerima dan memutar audio dari semua komputer</p>
+                    <p class="hint">* Master akan menerima dan memutar audio HANYA di komputernya sendiri</p>
+                    
+                    <!-- Warning jika sudah ada master -->
+                    <div x-show="masterShortId" class="audio-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Sudah ada Master (<strong x-text="masterShortId"></strong>). Anda tidak bisa menjadi master selama master aktif.</span>
+                    </div>
                 </div>
                 
                 <div x-show="isMaster" class="master-active">
@@ -68,14 +133,15 @@
                         <i class="fas fa-crown"></i>
                         <div>
                             <h4>Anda adalah Master Controller</h4>
-                            <p>Audio akan diputar di komputer ini. Semua komputer lain mengirim teks ke Anda.</p>
+                            <p>ID Master: <strong x-text="clientShortId"></strong></p>
+                            <p><strong>Audio hanya akan diputar di komputer ini.</strong> Komputer lain tidak akan mendengar audio.</p>
                         </div>
                     </div>
                     <div class="master-controls">
                         <button @click="playAudio()" 
                                 :disabled="!currentAudio || isPlaying" 
                                 class="btn btn-primary">
-                            <i class="fas fa-play"></i> Putar Audio
+                            <i class="fas fa-play"></i> Putar Audio (Hanya di PC ini)
                         </button>
                         <button @click="pauseAudio()" 
                                 :disabled="!isPlaying" 
@@ -98,8 +164,8 @@
                             <span>Durasi: <strong x-text="currentAudio?.duration + ' detik'"></strong></span>
                         </div>
                         <div class="stat">
-                            <i class="fas fa-microphone"></i>
-                            <span>Dari: <strong x-text="currentAudio?.fromClientId || 'Unknown'"></strong></span>
+                            <i class="fas fa-user"></i>
+                            <span>Dari: <strong x-text="currentAudio?.fromClientShortId || formatClientId(currentAudio?.fromClientId)"></strong></span>
                         </div>
                     </div>
                 </div>
@@ -107,7 +173,7 @@
         </section>
 
         <!-- Connected Clients -->
-        <section x-show="connectedClients.length > 1" class="card clients-section">
+        <section x-show="connectedClients.length > 0" class="card clients-section">
             <div class="card-header">
                 <h3><i class="fas fa-network-wired"></i> Komputer Terhubung</h3>
                 <span class="badge" x-text="connectedClients.length"></span>
@@ -120,7 +186,7 @@
                                 <i class="fas" :class="client.isMaster ? 'fa-crown' : 'fa-desktop'"></i>
                             </div>
                             <div class="client-info">
-                                <h4 x-text="client.id.substring(0, 12)"></h4>
+                                <h4 x-text="client.shortId || formatClientId(client.id)"></h4>
                                 <p :class="{ 'master': client.isMaster }" 
                                    x-text="client.isMaster ? 'Master Controller' : 'Client'"></p>
                                 <small x-text="formatTime(client.joinedAt)"></small>
@@ -147,7 +213,7 @@
                 <div class="card-body">
                     <textarea x-model="text"
                               @input="updateCharCount()"
-                              placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara... (Audio akan diputar di komputer Master)"
+                              placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara... (Audio akan diputar HANYA di komputer Master)"
                               rows="4"
                               :maxlength="maxChars"
                               :class="{'has-error': charCount >= maxChars}"
@@ -160,23 +226,9 @@
                         <button @click="pasteText()" class="btn btn-outline">
                             <i class="fas fa-paste"></i> Tempel
                         </button>
-                        <!-- <button @click="loadExample()" class="btn btn-outline">
+                        <button @click="loadExample()" class="btn btn-outline">
                             <i class="fas fa-lightbulb"></i> Contoh
-                        </button> -->
-                                   <button @click="convertToSpeech()" 
-                        :disabled="isLoading || !text || isMaster && !isMasterReady"
-                        class="btn btn-primary btn-convert">
-                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
-                    <span x-text="getConvertButtonText()"></span>
-                </button>
-                
-                <button @click="convertAndBroadcast()" 
-                        :disabled="isLoading || !text || !isMaster"
-                        x-show="isMaster"
-                        class="btn btn-success">
-                    <i class="fas fa-broadcast-tower"></i>
-                    <span>Kirim ke Semua</span>
-                </button>
+                        </button>
                     </div>
                 </div>
             </section>
@@ -232,22 +284,22 @@
             </section>
 
             <!-- Action Section -->
-            <!-- <section class="action-section">
+            <section class="action-section">
                 <button @click="convertToSpeech()" 
-                        :disabled="isLoading || !text || isMaster && !isMasterReady"
+                        :disabled="isLoading || !text || !text.trim() || !masterShortId"
                         class="btn btn-primary btn-convert">
                     <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
                     <span x-text="getConvertButtonText()"></span>
                 </button>
                 
                 <button @click="convertAndBroadcast()" 
-                        :disabled="isLoading || !text || !isMaster"
+                        :disabled="isLoading || !text || !text.trim() || !isMaster"
                         x-show="isMaster"
                         class="btn btn-success">
                     <i class="fas fa-broadcast-tower"></i>
-                    <span>Kirim ke Semua</span>
+                    <span>Kirim ke Semua Komputer</span>
                 </button>
-            </section> -->
+            </section>
 
             <!-- Audio Player Section (Master Only) -->
             <section x-show="isMaster && currentAudio" class="card audio-section">
@@ -255,7 +307,7 @@
                     <h3><i class="fas fa-music"></i> Pemutar Audio (Master)</h3>
                     <div class="audio-source" x-show="currentAudio?.fromClientId">
                         <i class="fas fa-user"></i>
-                        <span>Dari: <strong x-text="currentAudio?.fromClientId"></strong></span>
+                        <span>Dari: <strong x-text="currentAudio?.fromClientShortId || formatClientId(currentAudio?.fromClientId)"></strong></span>
                     </div>
                 </div>
                 <div class="card-body">
@@ -334,6 +386,7 @@
                                         <span><i class="fas fa-language"></i> <span x-text="getLanguageCode(item.language)"></span></span>
                                         <span><i class="fas fa-clock"></i> <span x-text="formatTime(item.timestamp)"></span></span>
                                         <span><i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i></span>
+                                        <span x-show="item.master"><i class="fas fa-crown"></i> <span x-text="item.master"></span></span>
                                     </div>
                                 </div>
                                 <div class="history-actions">
@@ -375,7 +428,7 @@
                             <i class="fas fa-crown"></i>
                             <div>
                                 <h4>Master</h4>
-                                <p x-text="isMaster ? 'Anda' : masterClientId || 'Tidak Ada'"></p>
+                                <p x-text="isMaster ? 'Anda (' + clientShortId + ')' : (masterShortId || 'Tidak Ada')"></p>
                             </div>
                         </div>
                         <div class="status-item">
@@ -395,7 +448,7 @@
             <div class="footer-content">
                 <div class="footer-info">
                     <p>TTS Multi-Client System v2.0 &copy; 2024</p>
-                    <p class="footer-note">Sistem Text-to-Speech dengan output audio terpusat</p>
+                    <p class="footer-note">Sistem Text-to-Speech dengan output audio terpusat HANYA di komputer Master</p>
                 </div>
                 <div class="footer-links">
                     <button @click="showSystemInfo()" class="btn-link">
@@ -424,36 +477,42 @@
             <div class="modal-body">
                 <div class="system-info">
                     <h4>TTS Multi-Client System v2.0</h4>
-                    <p>Sistem ini memungkinkan beberapa komputer mengirim teks untuk dikonversi menjadi suara, tetapi output audio hanya dari satu komputer (Master Controller).</p>
+                    <p><strong>Fitur Utama:</strong> Hanya satu Master yang aktif. Audio hanya diputar di komputer Master.</p>
                     
                     <div class="info-grid">
                         <div class="info-item">
                             <strong><i class="fas fa-user-crown"></i> Master Controller:</strong>
-                            <p>Komputer yang memutar audio. Hanya satu master yang aktif.</p>
+                            <p>Hanya satu komputer yang menjadi Master. Audio HANYA diputar di komputer ini.</p>
                         </div>
                         <div class="info-item">
                             <strong><i class="fas fa-desktop"></i> Client Biasa:</strong>
-                            <p>Komputer yang hanya mengirim teks. Tidak memutar audio.</p>
+                            <p>Komputer yang hanya mengirim teks. Tidak bisa menjadi Master selama ada Master aktif.</p>
                         </div>
                         <div class="info-item">
-                            <strong><i class="fas fa-broadcast-tower"></i> Broadcast:</strong>
-                            <p>Master dapat mengirim audio ke semua komputer.</p>
+                            <strong><i class="fas fa-id-card"></i> ID Pendek:</strong>
+                            <p>Setiap client memiliki ID pendek (8 karakter) untuk memudahkan identifikasi.</p>
                         </div>
                         <div class="info-item">
-                            <strong><i class="fas fa-history"></i> Antrian:</strong>
-                            <p>Teks dikirim saat tidak ada master akan masuk antrian.</p>
+                            <strong><i class="fas fa-volume-off"></i> Audio Terpusat:</strong>
+                            <p>Audio hanya keluar dari speaker komputer Master, tidak dari komputer lain.</p>
                         </div>
                     </div>
                     
                     <h5>Alur Kerja:</h5>
                     <ol>
-                        <li>Klien terhubung ke server</li>
-                        <li>Satu klien menjadi Master</li>
-                        <li>Klien lain mengirim teks</li>
+                        <li>Hanya satu client bisa menjadi Master</li>
+                        <li>Client lain tidak bisa menjadi Master selama Master aktif</li>
+                        <li>Client mengirim teks ke server</li>
                         <li>Server konversi teks ke audio</li>
-                        <li>Audio dikirim ke Master</li>
-                        <li>Master memutar audio</li>
+                        <li>Audio dikirim HANYA ke Master</li>
+                        <li>Master memutar audio di komputernya sendiri</li>
+                        <li>Client lain tidak mendengar audio (kecuali broadcast)</li>
                     </ol>
+                    
+                    <div class="warning-box">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p><strong>Perhatian:</strong> Jika sudah ada Master aktif, client lain TIDAK BISA menjadi Master sampai Master melepaskan peran.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -469,29 +528,30 @@
             </div>
             <div class="modal-body">
                 <div class="help-content">
-                    <h4>Cara Menggunakan:</h4>
+                    <h4>Cara Menggunakan (Sistem Baru):</h4>
                     
                     <div class="step">
                         <div class="step-number">1</div>
                         <div class="step-content">
-                            <h5>Persiapan</h5>
-                            <p>Pastikan semua komputer terhubung ke jaringan yang sama. Buka alamat server di semua browser.</p>
+                            <h5>Menentukan Master</h5>
+                            <p>Di komputer yang memiliki speaker, klik "Jadikan Master". <strong>Hanya satu komputer yang bisa menjadi Master.</strong></p>
+                            <p class="note"><i class="fas fa-info-circle"></i> Jika sudah ada Master, tombol "Jadikan Master" akan dinonaktifkan.</p>
                         </div>
                     </div>
                     
                     <div class="step">
                         <div class="step-number">2</div>
                         <div class="step-content">
-                            <h5>Menentukan Master</h5>
-                            <p>Di komputer yang memiliki speaker (output audio), klik "Jadikan Master". Komputer ini akan memutar semua audio.</p>
+                            <h5>Mengirim Teks dari Client</h5>
+                            <p>Di komputer lain (client biasa), masukkan teks dan klik "Kirim ke Master". Audio akan diputar <strong>HANYA di komputer Master</strong>.</p>
                         </div>
                     </div>
                     
                     <div class="step">
                         <div class="step-number">3</div>
                         <div class="step-content">
-                            <h5>Mengirim Teks</h5>
-                            <p>Di komputer lain (client biasa), masukkan teks, pilih bahasa, dan klik "Kirim ke Master". Audio akan diputar di komputer Master.</p>
+                            <h5>Memutar Audio (Master Only)</h5>
+                            <p>Di komputer Master, klik "Putar Audio" untuk memutar audio yang diterima. Audio hanya keluar dari speaker komputer Master.</p>
                         </div>
                     </div>
                     
@@ -499,23 +559,42 @@
                         <div class="step-number">4</div>
                         <div class="step-content">
                             <h5>Broadcast (Opsional)</h5>
-                            <p>Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua".</p>
+                            <p>Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua Komputer".</p>
                         </div>
                     </div>
                     
                     <h5>Troubleshooting:</h5>
                     <ul>
-                        <li><strong>Audio tidak keluar:</strong> Pastikan komputer Master memiliki speaker aktif dan volume cukup.</li>
-                        <li><strong>Tidak bisa jadi Master:</strong> Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</li>
+                        <li><strong>Tidak bisa jadi Master:</strong> Sudah ada Master aktif. Tunggu Master melepaskan peran atau minta Master saat ini untuk melepaskan.</li>
+                        <li><strong>Audio tidak keluar di Master:</strong> Pastikan komputer Master memiliki speaker aktif dan volume cukup.</li>
+                        <li><strong>Client tidak bisa mengirim teks:</strong> Pastikan ada Master yang aktif (lihat status di panel Master).</li>
+                        <li><strong>ID terlalu panjang:</strong> Sistem sekarang menggunakan ID pendek (8 karakter) untuk kemudahan.</li>
                         <li><strong>Koneksi terputus:</strong> Refresh halaman atau periksa jaringan.</li>
-                        <li><strong>Teks tidak terkirim:</strong> Pastikan ada Master yang aktif dan teks tidak kosong.</li>
                     </ul>
+                    
+                    <div class="tip-box">
+                        <i class="fas fa-lightbulb"></i>
+                        <p><strong>Tip:</strong> Gunakan ID pendek untuk mengidentifikasi komputer. Master: <code class="master-id">MASTER</code>, Client: <code class="client-id">CLIENT</code></p>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Audio Element (Hidden) -->
+    <!-- Audio Element (Hidden untuk non-master) -->
     <audio id="hiddenAudio" style="display: none;"></audio>
+    
+    <script>
+        // Additional JavaScript for better UX
+        document.addEventListener('alpine:init', () => {
+            // Add global helper
+            Alpine.magic('shortId', () => {
+                return (id) => {
+                    if (!id) return '';
+                    return id.length > 8 ? id.substring(0, 8) + '...' : id;
+                }
+            });
+        });
+    </script>
 </body>
 </html>

@@ -192,161 +192,161 @@ validateInput(text, language) {
   /**
    * Konversi text ke speech
    */
- /**
- * Konversi text ke speech
- */
-async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }) {
-    try {
-        // Validasi input
-        const validationErrors = this.validateInput(text, language);
-        if (validationErrors.length > 0) {
-            throw new Error(validationErrors.join(', '));
-        }
+  /**
+   * Konversi text ke speech
+   */
+  async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }) {
+      try {
+          // Validasi input
+          const validationErrors = this.validateInput(text, language);
+          if (validationErrors.length > 0) {
+              throw new Error(validationErrors.join(', '));
+          }
 
-        // Apply rate limiting
-        try {
-            await rateLimiter.consume('google-tts');
-        } catch (rateLimitError) {
-            throw new Error('Rate limit exceeded. Silakan coba lagi nanti.');
-        }
+          // Apply rate limiting
+          try {
+              await rateLimiter.consume('google-tts');
+          } catch (rateLimitError) {
+              throw new Error('Rate limit exceeded. Silakan coba lagi nanti.');
+          }
 
-        // Optimasi teks
-        const optimizedText = this.optimizeTextForSpeech(text);
-        
-        // Truncate text jika terlalu panjang
-        const truncatedText = this.truncateText(optimizedText, 200);
-        
-        // Map language code
-        const langCode = this.mapLanguageCode(language);
-        
-        // Parameter untuk request
-        const params = new URLSearchParams({
-            ie: 'UTF-8',
-            tl: langCode,
-            client: 'tw-ob',
-            q: truncatedText,
-            ttsspeed: speed.toString(),
-            textlen: truncatedText.length.toString(),
-            idx: '0',
-            total: '1',
-            prev: 'input',
-        });
-        
-        // Untuk beberapa bahasa, tambahkan parameter khusus
-        if (['id', 'en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko'].includes(langCode)) {
-            params.append('tk', this.generateToken(truncatedText));
-        }
-        
-        const ttsUrl = `${this.baseUrl}?${params.toString()}`;
-        
-        console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}`);
-        
-        // PERBAIKAN DI SINI: Konfigurasi Axios yang benar
-        // maxContentLength dan maxBodyLength harus dalam bytes
-        const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2; // Default 2MB
-        const maxSizeBytes = maxSizeMB * 1024 * 1024; // Convert MB to bytes
-        
-        console.log(`Axios Config: maxContentLength=${maxSizeBytes} bytes (${maxSizeMB} MB)`);
-        
-        // Request ke Google TTS
-        const response = await axios.get(ttsUrl, {
-            responseType: 'arraybuffer',
-            timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000, // 40 detik
-            headers: {
-                ...this.defaultHeaders,
-                'Accept-Encoding': 'identity',
-                'DNT': '1',
-                'Accept': 'audio/mpeg, audio/*',
-                'Connection': 'keep-alive',
-            },
-            // FIX: Gunakan nilai dalam bytes yang benar
-            maxContentLength: maxSizeBytes,
-            maxBodyLength: maxSizeBytes,
-            
-            // Tambahkan konfigurasi untuk response yang lebih baik
-            maxRedirects: 5,
-            decompress: true,
-            
-            // Validasi status (Google TTS biasanya return 200)
-            validateStatus: function (status) {
-                return status >= 200 && status < 300;
-            }
-        });
-        
-        // Debug: log response info
-        console.log(`Response Status: ${response.status}, Content-Type: ${response.headers['content-type']}, Size: ${response.data ? response.data.length : 0} bytes`);
-        
-        // Validasi response
-        if (!response.data || response.data.length === 0) {
-            throw new Error('Google TTS tidak mengembalikan data audio');
-        }
-        
-        if (response.data.length > maxSizeBytes) {
-            console.warn(`Audio size ${response.data.length} bytes exceeds limit ${maxSizeBytes} bytes`);
-        }
-        
-        // Cek format audio
-        const audioFormat = this.detectAudioFormat(response.data);
-        console.log(`Detected audio format: ${audioFormat}, Size: ${response.data.length} bytes`);
-        
-        // Konversi ke base64
-        const audioBase64 = Buffer.from(response.data).toString('base64');
-        const audioDataUrl = `data:${audioFormat};base64,${audioBase64}`;
-        
-        // Hitung durasi estimasi
-        const duration = this.estimateDuration(truncatedText, speed);
-        
-        return {
-            success: true,
-            audioUrl: audioDataUrl,
-            duration: duration,
-            textLength: truncatedText.length,
-            originalTextLength: text.length,
-            language: language,
-            languageCode: langCode,
-            speed: speed,
-            pitch: pitch,
-            format: audioFormat,
-            truncated: truncatedText.length < text.length,
-            optimized: optimizedText !== text,
-            voiceGender: 'female',
-            timestamp: new Date().toISOString(),
-            audioSize: response.data.length
-        };
-        
-    } catch (error) {
-        console.error(`[${new Date().toISOString()}] Google TTS Service Error:`, {
-            message: error.message,
-            code: error.code,
-            response: error.response ? {
-                status: error.response.status,
-                headers: error.response.headers
-            } : null,
-            config: error.config ? {
-                url: error.config.url,
-                method: error.config.method,
-                timeout: error.config.timeout,
-                maxContentLength: error.config.maxContentLength
-            } : null
-        });
-        
-        let userMessage = 'Gagal mengonversi teks ke suara';
-        
-        if (error.response) {
-            userMessage = `Google TTS menolak permintaan (Status: ${error.response.status}). Coba ganti bahasa atau kurangi teks.`;
-        } else if (error.code === 'ECONNABORTED') {
-            userMessage = 'Timeout: Google TTS tidak merespons. Coba lagi nanti.';
-        } else if (error.message.includes('Rate limit')) {
-            userMessage = error.message;
-        } else if (error.message.includes('maxContentLength')) {
-            userMessage = 'Response audio terlalu besar. Coba teks yang lebih pendek.';
-        } else if (error.message.includes('ENOTFOUND')) {
-            userMessage = 'Tidak dapat terhubung ke Google TTS. Periksa koneksi internet.';
-        }
-        
-        throw new Error(`${userMessage} (Detail: ${error.message})`);
-    }
-}
+          // Optimasi teks
+          const optimizedText = this.optimizeTextForSpeech(text);
+          
+          // Truncate text jika terlalu panjang
+          const truncatedText = this.truncateText(optimizedText, 200);
+          
+          // Map language code
+          const langCode = this.mapLanguageCode(language);
+          
+          // Parameter untuk request
+          const params = new URLSearchParams({
+              ie: 'UTF-8',
+              tl: langCode,
+              client: 'tw-ob',
+              q: truncatedText,
+              ttsspeed: speed.toString(),
+              textlen: truncatedText.length.toString(),
+              idx: '0',
+              total: '1',
+              prev: 'input',
+          });
+          
+          // Untuk beberapa bahasa, tambahkan parameter khusus
+          if (['id', 'en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko'].includes(langCode)) {
+              params.append('tk', this.generateToken(truncatedText));
+          }
+          
+          const ttsUrl = `${this.baseUrl}?${params.toString()}`;
+          
+          console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}`);
+          
+          // PERBAIKAN DI SINI: Konfigurasi Axios yang benar
+          // maxContentLength dan maxBodyLength harus dalam bytes
+          const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2; // Default 2MB
+          const maxSizeBytes = maxSizeMB * 1024 * 1024; // Convert MB to bytes
+          
+          console.log(`Axios Config: maxContentLength=${maxSizeBytes} bytes (${maxSizeMB} MB)`);
+          
+          // Request ke Google TTS
+          const response = await axios.get(ttsUrl, {
+              responseType: 'arraybuffer',
+              timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000, // 40 detik
+              headers: {
+                  ...this.defaultHeaders,
+                  'Accept-Encoding': 'identity',
+                  'DNT': '1',
+                  'Accept': 'audio/mpeg, audio/*',
+                  'Connection': 'keep-alive',
+              },
+              // FIX: Gunakan nilai dalam bytes yang benar
+              maxContentLength: maxSizeBytes,
+              maxBodyLength: maxSizeBytes,
+              
+              // Tambahkan konfigurasi untuk response yang lebih baik
+              maxRedirects: 5,
+              decompress: true,
+              
+              // Validasi status (Google TTS biasanya return 200)
+              validateStatus: function (status) {
+                  return status >= 200 && status < 300;
+              }
+          });
+          
+          // Debug: log response info
+          console.log(`Response Status: ${response.status}, Content-Type: ${response.headers['content-type']}, Size: ${response.data ? response.data.length : 0} bytes`);
+          
+          // Validasi response
+          if (!response.data || response.data.length === 0) {
+              throw new Error('Google TTS tidak mengembalikan data audio');
+          }
+          
+          if (response.data.length > maxSizeBytes) {
+              console.warn(`Audio size ${response.data.length} bytes exceeds limit ${maxSizeBytes} bytes`);
+          }
+          
+          // Cek format audio
+          const audioFormat = this.detectAudioFormat(response.data);
+          console.log(`Detected audio format: ${audioFormat}, Size: ${response.data.length} bytes`);
+          
+          // Konversi ke base64
+          const audioBase64 = Buffer.from(response.data).toString('base64');
+          const audioDataUrl = `data:${audioFormat};base64,${audioBase64}`;
+          
+          // Hitung durasi estimasi
+          const duration = this.estimateDuration(truncatedText, speed);
+          
+          return {
+              success: true,
+              audioUrl: audioDataUrl,
+              duration: duration,
+              textLength: truncatedText.length,
+              originalTextLength: text.length,
+              language: language,
+              languageCode: langCode,
+              speed: speed,
+              pitch: pitch,
+              format: audioFormat,
+              truncated: truncatedText.length < text.length,
+              optimized: optimizedText !== text,
+              voiceGender: 'female',
+              timestamp: new Date().toISOString(),
+              audioSize: response.data.length
+          };
+          
+      } catch (error) {
+          console.error(`[${new Date().toISOString()}] Google TTS Service Error:`, {
+              message: error.message,
+              code: error.code,
+              response: error.response ? {
+                  status: error.response.status,
+                  headers: error.response.headers
+              } : null,
+              config: error.config ? {
+                  url: error.config.url,
+                  method: error.config.method,
+                  timeout: error.config.timeout,
+                  maxContentLength: error.config.maxContentLength
+              } : null
+          });
+          
+          let userMessage = 'Gagal mengonversi teks ke suara';
+          
+          if (error.response) {
+              userMessage = `Google TTS menolak permintaan (Status: ${error.response.status}). Coba ganti bahasa atau kurangi teks.`;
+          } else if (error.code === 'ECONNABORTED') {
+              userMessage = 'Timeout: Google TTS tidak merespons. Coba lagi nanti.';
+          } else if (error.message.includes('Rate limit')) {
+              userMessage = error.message;
+          } else if (error.message.includes('maxContentLength')) {
+              userMessage = 'Response audio terlalu besar. Coba teks yang lebih pendek.';
+          } else if (error.message.includes('ENOTFOUND')) {
+              userMessage = 'Tidak dapat terhubung ke Google TTS. Periksa koneksi internet.';
+          }
+          
+          throw new Error(`${userMessage} (Detail: ${error.message})`);
+      }
+  }
 
   /**
    * Generate token untuk beberapa bahasa (optional)
