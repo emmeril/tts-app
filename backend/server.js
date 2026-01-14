@@ -4,53 +4,24 @@ const morgan = require('morgan');
 const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
-
-// Import Google TTS service
 const googleTTSService = require('./services/googleTTSService');
 
 const app = express();
 const server = http.createServer(app);
-
-// Socket.IO configuration for public access
 const io = socketIo(server, {
-  cors: {
-    origin: "*", // Allow all origins for public access
-    methods: ['GET', 'POST'],
-    credentials: true
-  },
   pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT) || 5000,
-  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000,
-  transports: ['websocket', 'polling']
+  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000
 });
 
 const PORT = process.env.PORT || 3000;
 
-// Middleware - No CORS package needed
+// Middleware (tanpa CORS)
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Manual CORS headers for all routes
-app.use((req, res, next) => {
-  // Allow all origins
-  res.header('Access-Control-Allow-Origin', '*');
-  
-  // Allow all methods
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  
-  // Allow all headers
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
-
-// Serve static files (frontend)
-app.use(express.static(path.join(__dirname, '.')));
+// Serve static files from frontend directory
+app.use(express.static(path.join(__dirname, '../frontend')));
 
 // Store connected clients and their info
 const connectedClients = new Map();
@@ -104,8 +75,7 @@ io.on('connection', (socket) => {
     totalClients: connectedClients.size,
     connectedClients: Array.from(connectedClients.values()).map(client => ({
       id: client.id,
-      isMaster: client.isMaster,
-      joinedAt: client.joinedAt
+      isMaster: client.isMaster
     }))
   });
   
@@ -146,7 +116,6 @@ io.on('connection', (socket) => {
       if (masterRequestQueue.length > 0) {
         console.log(`Processing ${masterRequestQueue.length} pending requests`);
         masterRequestQueue.forEach(request => {
-          // Resend the TTS request to the new master
           socket.emit('tts-request', request);
         });
         masterRequestQueue = [];
@@ -191,119 +160,119 @@ io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] TTS Request from ${client?.id}: ${language}, Text Length: ${text?.length || 0}`);
     
     try {
-      // Validasi input dengan detail
-      if (!text || typeof text !== 'string') {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Teks harus berupa string'
-        });
-        return;
-      }
-      
-      const trimmedText = text.trim();
-      if (trimmedText.length === 0) {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Teks tidak boleh kosong atau hanya spasi'
-        });
-        return;
-      }
-      
-      if (text.length > 5000) {
-        socket.emit('tts-error', {
-          success: false,
-          error: `Teks terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`,
-          suggestion: 'Coba bagi teks menjadi beberapa bagian'
-        });
-        return;
-      }
-      
-      // If no master, queue the request
-      if (!masterClient) {
-        masterRequestQueue.push({
-          ...data,
-          text: trimmedText,
-          fromClientId: client.id,
-          timestamp: new Date().toISOString(),
-          priority: priority
+        // Validasi input dengan detail
+        if (!text || typeof text !== 'string') {
+            socket.emit('tts-error', {
+                success: false,
+                error: 'Teks harus berupa string'
+            });
+            return;
+        }
+        
+        const trimmedText = text.trim();
+        if (trimmedText.length === 0) {
+            socket.emit('tts-error', {
+                success: false,
+                error: 'Teks tidak boleh kosong atau hanya spasi'
+            });
+            return;
+        }
+        
+        if (text.length > 5000) {
+            socket.emit('tts-error', {
+                success: false,
+                error: `Teks terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`,
+                suggestion: 'Coba bagi teks menjadi beberapa bagian'
+            });
+            return;
+        }
+        
+        // If no master, queue the request
+        if (!masterClient) {
+            masterRequestQueue.push({
+                ...data,
+                text: trimmedText, // Gunakan teks yang sudah di-trim
+                fromClientId: client.id,
+                timestamp: new Date().toISOString(),
+                priority: priority
+            });
+            
+            socket.emit('tts-queued', {
+                success: true,
+                message: 'TTS request dalam antrian. Menunggu master controller...',
+                queuePosition: masterRequestQueue.length,
+                textLength: text.length
+            });
+            
+            io.emit('master-needed', {
+                message: 'Master controller diperlukan untuk memproses TTS request',
+                pendingRequests: masterRequestQueue.length
+            });
+            
+            return;
+        }
+        
+        // Convert text to speech
+        const result = await googleTTSService.convertTextToSpeech({
+            text: trimmedText,
+            language: language,
+            speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
         });
         
-        socket.emit('tts-queued', {
-          success: true,
-          message: 'TTS request dalam antrian. Menunggu master controller...',
-          queuePosition: masterRequestQueue.length,
-          textLength: text.length
+        // Send audio to MASTER CLIENT only
+        io.to(masterClient).emit('tts-audio', {
+            ...result,
+            fromClientId: client.id,
+            fromClientSocketId: socket.id,
+            timestamp: new Date().toISOString(),
+            priority: priority,
+            requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         });
         
-        io.emit('master-needed', {
-          message: 'Master controller diperlukan untuk memproses TTS request',
-          pendingRequests: masterRequestQueue.length
+        // Send confirmation to sender
+        socket.emit('tts-complete', {
+            success: true,
+            message: 'Audio telah dikirim ke Master Controller',
+            masterClientId: connectedClients.get(masterClient)?.id,
+            textLength: text.length,
+            language: language,
+            duration: result.duration
         });
         
-        return;
-      }
-      
-      // Convert text to speech
-      const result = await googleTTSService.convertTextToSpeech({
-        text: trimmedText,
-        language: language,
-        speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
-      });
-      
-      // Send audio to MASTER CLIENT only
-      io.to(masterClient).emit('tts-audio', {
-        ...result,
-        fromClientId: client.id,
-        fromClientSocketId: socket.id,
-        timestamp: new Date().toISOString(),
-        priority: priority,
-        requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
-      
-      // Send confirmation to sender
-      socket.emit('tts-complete', {
-        success: true,
-        message: 'Audio telah dikirim ke Master Controller',
-        masterClientId: connectedClients.get(masterClient)?.id,
-        textLength: text.length,
-        language: language,
-        duration: result.duration
-      });
-      
-      // Notify all clients about new TTS (except sender and master)
-      socket.broadcast.emit('tts-notification', {
-        fromClientId: client.id,
-        textPreview: text.length > 50 ? text.substring(0, 50) + '...' : text,
-        language: language,
-        timestamp: new Date().toISOString()
-      });
-      
+        // Notify all clients about new TTS (except sender and master)
+        socket.broadcast.emit('tts-notification', {
+            fromClientId: client.id,
+            textPreview: text.length > 50 ? text.substring(0, 50) + '...' : text,
+            language: language,
+            timestamp: new Date().toISOString()
+        });
+        
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] TTS Error for ${client?.id}:`, error.message);
-      
-      // Error message yang lebih user-friendly
-      let userMessage = 'Gagal mengonversi teks ke suara';
-      let suggestion = 'Coba gunakan teks yang lebih pendek atau bahasa lain';
-      
-      if (error.message.includes('Rate limit')) {
-        userMessage = 'Terlalu banyak permintaan ke Google TTS';
-        suggestion = 'Tunggu beberapa menit sebelum mencoba lagi';
-      } else if (error.message.includes('Timeout')) {
-        userMessage = 'Google TTS tidak merespons';
-        suggestion = 'Coba lagi dalam beberapa saat';
-      } else if (error.message.includes('kosong')) {
-        userMessage = error.message;
-        suggestion = 'Pastikan teks tidak kosong';
-      } else if (error.message.includes('panjang')) {
-        userMessage = error.message;
-        suggestion = 'Coba bagi teks menjadi beberapa bagian (maksimal 5000 karakter)';
-      }
-      
-      socket.emit('tts-error', {
-        success: false,
-        error: `${userMessage} (Detail: ${error.message})`,
-        suggestion: suggestion
-      });
+        console.error(`[${new Date().toISOString()}] TTS Error for ${client?.id}:`, error.message);
+        
+        // Error message yang lebih user-friendly
+        let userMessage = 'Gagal mengonversi teks ke suara';
+        let suggestion = 'Coba gunakan teks yang lebih pendek atau bahasa lain';
+        
+        if (error.message.includes('Rate limit')) {
+            userMessage = 'Terlalu banyak permintaan ke Google TTS';
+            suggestion = 'Tunggu beberapa menit sebelum mencoba lagi';
+        } else if (error.message.includes('Timeout')) {
+            userMessage = 'Google TTS tidak merespons';
+            suggestion = 'Coba lagi dalam beberapa saat';
+        } else if (error.message.includes('kosong')) {
+            userMessage = error.message;
+            suggestion = 'Pastikan teks tidak kosong';
+        } else if (error.message.includes('panjang')) {
+            userMessage = error.message;
+            suggestion = 'Coba bagi teks menjadi beberapa bagian (maksimal 5000 karakter)';
+        }
+        
+        socket.emit('tts-error', {
+            success: false,
+            error: `${userMessage} (Detail: ${error.message})`,
+            suggestion: suggestion
+        });
     }
   });
   
@@ -391,8 +360,7 @@ io.on('connection', (socket) => {
     }
     socket.emit('pong', {
       serverTime: new Date().toISOString(),
-      clientId: client?.id,
-      clientPingTime: data.timestamp
+      clientId: client?.id
     });
   });
   
@@ -434,8 +402,7 @@ io.on('connection', (socket) => {
       reason: reason,
       connectedClients: Array.from(connectedClients.values()).map(c => ({
         id: c.id,
-        isMaster: c.isMaster,
-        joinedAt: c.joinedAt
+        isMaster: c.isMaster
       }))
     });
   });
@@ -480,8 +447,7 @@ app.get('/api/health', (req, res) => {
     connectedClients: connectedClients.size,
     masterClient: masterClient ? connectedClients.get(masterClient)?.id : null,
     pendingRequests: masterRequestQueue.length,
-    memoryUsage: process.memoryUsage(),
-    nodeVersion: process.version
+    memoryUsage: process.memoryUsage()
   });
 });
 
@@ -585,90 +551,90 @@ app.get('/api/languages', (req, res) => {
 });
 
 app.post('/api/tts', async (req, res) => {
-  try {
-    const { text, language = 'id-ID', speed = 1.0, broadcast = false } = req.body;
-    
-    console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
-    
-    // Validasi lebih detail
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({
-        success: false,
-        error: 'Text harus berupa string'
-      });
+    try {
+        const { text, language = 'id-ID', speed = 1.0, broadcast = false } = req.body;
+        
+        console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
+        
+        // Validasi lebih detail
+        if (!text || typeof text !== 'string') {
+            return res.status(400).json({
+                success: false,
+                error: 'Text harus berupa string'
+            });
+        }
+        
+        if (text.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Text tidak boleh kosong atau hanya spasi'
+            });
+        }
+        
+        if (text.length > 5000) {
+            return res.status(400).json({
+                success: false,
+                error: `Text terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`
+            });
+        }
+        
+        const validSpeed = Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0));
+        
+        console.log(`[${new Date().toISOString()}] API TTS Request: ${language}, Speed: ${validSpeed}, Text Length: ${text.length}`);
+        
+        const result = await googleTTSService.convertTextToSpeech({
+            text: text,
+            language: language,
+            speed: validSpeed
+        });
+        
+        if (broadcast && masterClient) {
+            io.emit('tts-audio-broadcast', {
+                ...result,
+                fromClientId: 'api-request',
+                broadcast: true,
+                timestamp: new Date().toISOString()
+            });
+        } else if (masterClient) {
+            io.to(masterClient).emit('tts-audio', {
+                ...result,
+                fromClientId: 'api-request',
+                timestamp: new Date().toISOString(),
+                priority: 'high'
+            });
+        }
+        
+        res.json({
+            ...result,
+            broadcasted: broadcast,
+            masterClient: masterClient ? connectedClients.get(masterClient)?.id : null,
+            clientCount: connectedClients.size
+        });
+        
+    } catch (error) {
+        console.error('API TTS Error:', error.message);
+        
+        // Error yang lebih spesifik
+        let errorMessage = error.message || 'Terjadi kesalahan pada server';
+        let suggestion = 'Coba kurangi panjang teks atau ganti bahasa';
+        
+        if (error.message.includes('Rate limit')) {
+            errorMessage = 'Terlalu banyak permintaan. Silakan coba lagi nanti.';
+            suggestion = 'Tunggu 15 menit sebelum mengirim permintaan lagi';
+        } else if (error.message.includes('Timeout')) {
+            errorMessage = 'Server Google TTS tidak merespons.';
+            suggestion = 'Coba lagi dalam beberapa saat';
+        } else if (error.message.includes('kosong')) {
+            errorMessage = error.message;
+            suggestion = 'Pastikan Anda memasukkan teks yang valid';
+        }
+        
+        res.status(500).json({
+            success: false,
+            error: errorMessage,
+            suggestion: suggestion
+        });
     }
-    
-    if (text.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Text tidak boleh kosong atau hanya spasi'
-      });
-    }
-    
-    if (text.length > 5000) {
-      return res.status(400).json({
-        success: false,
-        error: `Text terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`
-      });
-    }
-    
-    const validSpeed = Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0));
-    
-    console.log(`[${new Date().toISOString()}] API TTS Request: ${language}, Speed: ${validSpeed}, Text Length: ${text.length}`);
-    
-    const result = await googleTTSService.convertTextToSpeech({
-      text: text,
-      language: language,
-      speed: validSpeed
-    });
-    
-    if (broadcast && masterClient) {
-      io.emit('tts-audio-broadcast', {
-        ...result,
-        fromClientId: 'api-request',
-        broadcast: true,
-        timestamp: new Date().toISOString()
-      });
-    } else if (masterClient) {
-      io.to(masterClient).emit('tts-audio', {
-        ...result,
-        fromClientId: 'api-request',
-        timestamp: new Date().toISOString(),
-        priority: 'high'
-      });
-    }
-    
-    res.json({
-      ...result,
-      broadcasted: broadcast,
-      masterClient: masterClient ? connectedClients.get(masterClient)?.id : null,
-      clientCount: connectedClients.size
-    });
-    
-  } catch (error) {
-    console.error('API TTS Error:', error.message);
-    
-    // Error yang lebih spesifik
-    let errorMessage = error.message || 'Terjadi kesalahan pada server';
-    let suggestion = 'Coba kurangi panjang teks atau ganti bahasa';
-    
-    if (error.message.includes('Rate limit')) {
-      errorMessage = 'Terlalu banyak permintaan. Silakan coba lagi nanti.';
-      suggestion = 'Tunggu 15 menit sebelum mengirim permintaan lagi';
-    } else if (error.message.includes('Timeout')) {
-      errorMessage = 'Server Google TTS tidak merespons.';
-      suggestion = 'Coba lagi dalam beberapa saat';
-    } else if (error.message.includes('kosong')) {
-      errorMessage = error.message;
-      suggestion = 'Pastikan Anda memasukkan teks yang valid';
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: errorMessage,
-      suggestion: suggestion
-    });
-  }
 });
 
 app.get('/api/test', async (req, res) => {
@@ -690,8 +656,7 @@ app.get('/api/stats', (req, res) => {
     pendingRequests: masterRequestQueue.length,
     serverUptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
-    activeSince: new Date(Date.now() - process.uptime() * 1000).toISOString(),
-    nodeVersion: process.version
+    activeSince: new Date(Date.now() - process.uptime() * 1000).toISOString()
   };
   
   res.json({
@@ -726,7 +691,6 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   Berjalan di: ${serverUrl}`);
   console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   Socket.IO aktif`);
-  console.log(`   CORS: DISABLED (Akses Publik)`);
   console.log(`   Tanggal: ${new Date().toLocaleString()}`);
   console.log(`========================================\n`);
   console.log(`📡 Socket.IO siap menerima koneksi`);
@@ -746,18 +710,4 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   4. Masukkan teks dan kirim dari komputer lain`);
   console.log(`   5. Audio akan diputar di komputer master`);
   console.log(`\n========================================\n`);
-});
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Server shutting down...');
-  
-  // Disconnect all clients
-  io.disconnectSockets();
-  
-  // Close server
-  server.close(() => {
-    console.log('✅ Server shut down gracefully');
-    process.exit(0);
-  });
 });
