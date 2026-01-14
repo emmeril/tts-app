@@ -4,269 +4,465 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panggilan Monse System</title>
-    <link rel="stylesheet" href="style.css">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome untuk ikon -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Font Google -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="app.js"></script>
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        /* Custom utility classes for remaining styles */
+        .btn {
+            @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 justify-center;
+        }
+        
+        .btn:disabled {
+            @apply opacity-50 cursor-not-allowed;
+        }
+        
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-700 text-white;
+        }
+        
+        .btn-success {
+            @apply bg-green-600 hover:bg-green-700 text-white;
+        }
+        
+        .btn-warning {
+            @apply bg-yellow-500 hover:bg-yellow-600 text-white;
+        }
+        
+        .btn-secondary {
+            @apply bg-gray-600 hover:bg-gray-700 text-white;
+        }
+        
+        .btn-danger {
+            @apply bg-red-600 hover:bg-red-700 text-white;
+        }
+        
+        .btn-outline {
+            @apply border border-gray-300 hover:bg-gray-50 text-gray-700;
+        }
+        
+        .btn-small {
+            @apply px-3 py-1 text-sm;
+        }
+        
+        .btn-link {
+            @apply text-blue-600 hover:text-blue-800 hover:underline;
+        }
+        
+        .card {
+            @apply bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden;
+        }
+        
+        .card-header {
+            @apply px-6 py-4 border-b border-gray-200 flex items-center justify-between;
+        }
+        
+        .card-body {
+            @apply p-6;
+        }
+        
+        .modal-overlay {
+            @apply fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4;
+        }
+        
+        .modal {
+            @apply bg-white rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto;
+        }
+        
+        .modal-header {
+            @apply px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white;
+        }
+        
+        .modal-body {
+            @apply p-6;
+        }
+        
+        .modal-lg {
+            @apply w-full max-w-4xl;
+        }
+        
+        .text-input {
+            @apply w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none;
+        }
+        
+        .select-input {
+            @apply w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+        }
+        
+        .slider {
+            @apply w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            @apply appearance-none h-5 w-5 rounded-full bg-blue-600 cursor-pointer;
+        }
+        
+        .notification {
+            @apply p-4 rounded-lg mb-2 flex items-start gap-3 shadow-sm border-l-4;
+        }
+        
+        .notification.success {
+            @apply bg-green-50 border-green-500 text-green-800;
+        }
+        
+        .notification.error {
+            @apply bg-red-50 border-red-500 text-red-800;
+        }
+        
+        .notification.info {
+            @apply bg-blue-50 border-blue-500 text-blue-800;
+        }
+        
+        .notification.warning {
+            @apply bg-yellow-50 border-yellow-500 text-yellow-800;
+        }
+        
+        .badge {
+            @apply px-2.5 py-0.5 rounded-full text-xs font-medium;
+        }
+        
+        .connected { @apply text-green-600; }
+        .disconnected { @apply text-red-600; }
+        .error { @apply text-yellow-600; }
+        
+        .master { @apply text-yellow-600; }
+        .wants-master { @apply text-purple-600; }
+        
+        .audio-element {
+            @apply w-full rounded-lg;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            @apply bg-gray-100;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            @apply bg-gray-400 rounded-full;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            @apply bg-gray-500;
+        }
+    </style>
 </head>
-<body>
-    <div class="container">
+<body class="bg-gray-50 text-gray-800">
+    <div class="min-h-screen flex flex-col">
         <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <i class="fas fa-volume-up"></i>
-                <div>
-                    <h1>Panggilan Monse System</h1>
-                    <p class="subtitle">Output audio terpusat dari satu komputer</p>
+        <header class="bg-white shadow-md py-4 px-6">
+            <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="bg-blue-100 p-3 rounded-full">
+                        <i class="fas fa-volume-up text-blue-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-900">Panggilan Monse System</h1>
+                        <p class="text-gray-600">Output audio terpusat dari satu komputer</p>
+                    </div>
                 </div>
-            </div>
-            <div class="header-controls">
-                <div class="server-status" :class="serverStatus">
-                    <i class="fas" :class="{
-                        'fa-wifi': serverStatus === 'connected',
-                        'fa-wifi-slash': serverStatus === 'disconnected',
-                        'fa-exclamation-triangle': serverStatus === 'error'
-                    }"></i>
-                    <span x-text="serverStatusText"></span>
-                </div>
-                <div class="client-id" x-show="clientId">
-                    <i class="fas fa-id-card"></i>
-                    <span>ID: <span x-text="clientIdShort"></span></span>
-                </div>
-                <div class="master-preference-badge" 
-                     :class="masterStatusColor" 
-                     @click="toggleMasterPreference()"
-                     style="cursor: pointer;">
-                    <i class="fas" :class="{
-                        'fa-crown': isMaster,
-                        'fa-hourglass-half': wantsToBeMaster && !isMaster,
-                        'fa-desktop': !wantsToBeMaster && !isMaster
-                    }"></i>
-                    <span x-text="masterStatusBadge"></span>
+                
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="server-status flex items-center gap-2 px-3 py-2 rounded-lg border" :class="serverStatus === 'connected' ? 'border-green-200 bg-green-50' : serverStatus === 'disconnected' ? 'border-red-200 bg-red-50' : 'border-yellow-200 bg-yellow-50'">
+                        <i class="fas" :class="{
+                            'fa-wifi text-green-600': serverStatus === 'connected',
+                            'fa-wifi-slash text-red-600': serverStatus === 'disconnected',
+                            'fa-exclamation-triangle text-yellow-600': serverStatus === 'error'
+                        }"></i>
+                        <span class="font-medium" x-text="serverStatusText"></span>
+                    </div>
+                    
+                    <div class="client-id flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50" x-show="clientId">
+                        <i class="fas fa-id-card text-gray-600"></i>
+                        <span class="text-sm">ID: <span class="font-mono" x-text="clientIdShort"></span></span>
+                    </div>
+                    
+                    <div class="master-preference-badge flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer" 
+                         :class="isMaster ? 'border-yellow-200 bg-yellow-50 text-yellow-700' : (wantsToBeMaster ? 'border-purple-200 bg-purple-50 text-purple-700' : 'border-gray-200 bg-gray-50 text-gray-700')" 
+                         @click="toggleMasterPreference()">
+                        <i class="fas" :class="{
+                            'fa-crown': isMaster,
+                            'fa-hourglass-half': wantsToBeMaster && !isMaster,
+                            'fa-desktop': !wantsToBeMaster && !isMaster
+                        }"></i>
+                        <span class="font-medium" x-text="masterStatusBadge"></span>
+                    </div>
                 </div>
             </div>
         </header>
 
-        <!-- Master Control Panel -->
-        <section class="master-control-panel" x-show="clientId">
-            <div class="panel-header">
-                <h3><i class="fas fa-crown"></i> Kontrol Master</h3>
-                <div class="client-count">
-                    <i class="fas fa-users"></i>
-                    <span x-text="connectedClients.length"></span> komputer terhubung
-                </div>
-            </div>
-            
-            <div class="panel-body">
-                <div x-show="!isMaster" class="master-request">
-                    <div class="master-info">
-                        <i class="fas fa-info-circle"></i>
-                        <p>Status: <strong :class="masterStatusColor" x-text="masterStatusBadge"></strong> - 
-                           <span x-show="wantsToBeMaster">Anda akan otomatis menjadi Master saat tersedia</span>
-                           <span x-show="!wantsToBeMaster">Audio akan diputar di komputer Master</span>
-                        </p>
+        <!-- Main Content -->
+        <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6">
+            <!-- Master Control Panel -->
+            <section class="card mb-6" x-show="clientId">
+                <div class="card-header">
+                    <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-crown"></i> Kontrol Master</h3>
+                    <div class="client-count flex items-center gap-2 text-gray-600">
+                        <i class="fas fa-users"></i>
+                        <span x-text="connectedClients.length"></span> komputer terhubung
                     </div>
-                    <div class="master-request-actions">
-                        <button @click="requestMasterRole()" 
-                                :disabled="isRequestingMaster || isMaster" 
-                                class="btn btn-success btn-master">
-                            <i class="fas fa-crown"></i>
-                            <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
-                        </button>
-                        <button @click="toggleMasterPreference()" class="btn btn-outline">
-                            <i class="fas fa-cog"></i> Pengaturan
-                        </button>
-                    </div>
-                    <p class="hint">* Master akan menerima dan memutar audio dari semua komputer</p>
-                    <p class="hint" x-show="wantsToBeMaster">
-                        <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis menjadi Master saat tersedia
-                    </p>
                 </div>
                 
-                <div x-show="isMaster" class="master-active">
-                    <div class="master-badge">
-                        <i class="fas fa-crown"></i>
-                        <div>
-                            <h4>Anda adalah Master Controller</h4>
-                            <p>Audio akan diputar di komputer ini. Semua komputer lain mengirim teks ke Anda.</p>
-                            <p class="auto-reconnect-info" x-show="wantsToBeMaster">
-                                <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis kembali sebagai Master jika terputus
+                <div class="card-body">
+                    <div x-show="!isMaster" class="space-y-4">
+                        <div class="master-info p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <div class="flex gap-3">
+                                <i class="fas fa-info-circle text-blue-600 mt-1"></i>
+                                <div>
+                                    <p>Status: <strong :class="masterStatusColor" x-text="masterStatusBadge"></strong> - 
+                                       <span x-show="wantsToBeMaster">Anda akan otomatis menjadi Master saat tersedia</span>
+                                       <span x-show="!wantsToBeMaster">Audio akan diputar di komputer Master</span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <button @click="requestMasterRole()" 
+                                    :disabled="isRequestingMaster || isMaster" 
+                                    class="btn btn-success">
+                                <i class="fas fa-crown"></i>
+                                <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
+                            </button>
+                            <button @click="toggleMasterPreference()" class="btn btn-outline">
+                                <i class="fas fa-cog"></i> Pengaturan
+                            </button>
+                        </div>
+                        
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <p>* Master akan menerima dan memutar audio dari semua komputer</p>
+                            <p x-show="wantsToBeMaster" class="flex items-center gap-2">
+                                <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis menjadi Master saat tersedia
                             </p>
                         </div>
                     </div>
-                    <div class="master-controls">
-                        <button @click="playAudio()" 
-                                :disabled="!currentAudio || isPlaying" 
-                                class="btn btn-primary">
-                            <i class="fas fa-play"></i> Putar Audio
-                        </button>
-                        <button @click="pauseAudio()" 
-                                :disabled="!isPlaying" 
-                                class="btn btn-warning">
-                            <i class="fas fa-pause"></i> Jeda
-                        </button>
-                        <button @click="stopAudio()" 
-                                :disabled="!currentAudio" 
-                                class="btn btn-secondary">
-                            <i class="fas fa-stop"></i> Stop
-                        </button>
-                        <div class="master-release-options">
-                            <button @click="releaseMasterRole(false)" 
-                                    class="btn btn-outline">
-                                <i class="fas fa-sign-out-alt"></i> Lepaskan Saja
-                            </button>
-                            <button @click="releaseMasterRole(true)" 
-                                    class="btn btn-outline btn-danger">
-                                <i class="fas fa-times-circle"></i> Lepaskan & Hapus Preferensi
-                            </button>
-                        </div>
-                    </div>
-                    <div class="master-stats" x-show="currentAudio">
-                        <div class="stat">
-                            <i class="fas fa-clock"></i>
-                            <span>Durasi: <strong x-text="currentAudio?.duration + ' detik'"></strong></span>
-                        </div>
-                        <div class="stat">
-                            <i class="fas fa-microphone"></i>
-                            <span>Dari: <strong x-text="currentAudio?.fromClientId || 'Unknown'"></strong></span>
-                        </div>
-                        <div class="stat">
-                            <i class="fas fa-history"></i>
-                            <span>Status: <strong x-text="isPlaying ? 'Sedang Diputar' : 'Siap'"></strong></span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Connected Clients -->
-        <section x-show="connectedClients.length > 1" class="card clients-section">
-            <div class="card-header">
-                <h3><i class="fas fa-network-wired"></i> Komputer Terhubung</h3>
-                <span class="badge" x-text="connectedClients.length"></span>
-            </div>
-            <div class="card-body">
-                <div class="clients-grid">
-                    <template x-for="client in connectedClients" :key="client.id">
-                        <div class="client-card" :class="{ 'master': client.isMaster, 'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster }">
-                            <div class="client-avatar" :class="{ 'master': client.isMaster, 'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster }">
-                                <i class="fas" :class="client.isMaster ? 'fa-crown' : (connectedClients.find(c => c.id === client.id)?.wantsToBeMaster ? 'fa-hourglass-half' : 'fa-desktop')"></i>
-                            </div>
-                            <div class="client-info">
-                                <h4 x-text="client.id.substring(0, 12)"></h4>
-                                <div class="client-roles">
-                                    <span :class="{ 'master': client.isMaster }" 
-                                          x-text="client.isMaster ? 'Master Controller' : 'Client'"></span>
-                                    <span x-show="connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster" 
-                                          class="wants-master-badge">
-                                        <i class="fas fa-clock"></i> Ingin Master
-                                    </span>
+                    
+                    <div x-show="isMaster" class="space-y-6">
+                        <div class="master-badge p-4 bg-gradient-to-r from-yellow-50 to-yellow-100 rounded-lg border border-yellow-200">
+                            <div class="flex gap-4">
+                                <div class="bg-yellow-100 p-3 rounded-full self-start">
+                                    <i class="fas fa-crown text-yellow-700 text-xl"></i>
                                 </div>
-                                <small x-text="formatTime(client.joinedAt)"></small>
-                            </div>
-                            <div class="client-status" :class="{ 
-                                'online': true, 
-                                'master': client.isMaster,
-                                'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster
-                            }">
-                                <i class="fas fa-circle"></i>
+                                <div class="space-y-2">
+                                    <h4 class="font-bold text-lg">Anda adalah Master Controller</h4>
+                                    <p class="text-gray-700">Audio akan diputar di komputer ini. Semua komputer lain mengirim teks ke Anda.</p>
+                                    <p class="text-sm flex items-center gap-2" x-show="wantsToBeMaster">
+                                        <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis kembali sebagai Master jika terputus
+                                    </p>
+                                </div>
                             </div>
                         </div>
-                    </template>
-                </div>
-            </div>
-        </section>
-
-        <main class="main-content">
-            <!-- Input Section -->
-            <section class="card input-section">
-                <div class="card-header">
-                    <h2><i class="fas fa-keyboard"></i> Input Teks</h2>
-                    <div class="char-count">
-                        <span x-text="charCount"></span>/<span x-text="maxChars"></span> karakter
-                        <span x-show="wordCount > 0">• <span x-text="wordCount"></span> kata</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <textarea x-model="text"
-                              @input="updateCharCount()"
-                              placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara... (Audio akan diputar di komputer Master)"
-                              rows="4"
-                              :maxlength="maxChars"
-                              :class="{'has-error': charCount >= maxChars}"
-                              class="text-input"></textarea>
-
-                    <div class="text-actions">
-                        <button @click="clearText()" class="btn btn-outline">
-                            <i class="fas fa-trash-alt"></i> Hapus
-                        </button>
-                        <button @click="pasteText()" class="btn btn-outline">
-                            <i class="fas fa-paste"></i> Tempel
-                        </button>
-                        <button @click="loadExample()" class="btn btn-outline">
-                            <i class="fas fa-lightbulb"></i> Contoh
-                        </button>
+                        
+                        <div class="flex flex-wrap gap-3">
+                            <button @click="playAudio()" 
+                                    :disabled="!currentAudio || isPlaying" 
+                                    class="btn btn-primary">
+                                <i class="fas fa-play"></i> Putar Audio
+                            </button>
+                            <button @click="pauseAudio()" 
+                                    :disabled="!isPlaying" 
+                                    class="btn btn-warning">
+                                <i class="fas fa-pause"></i> Jeda
+                            </button>
+                            <button @click="stopAudio()" 
+                                    :disabled="!currentAudio" 
+                                    class="btn btn-secondary">
+                                <i class="fas fa-stop"></i> Stop
+                            </button>
+                            
+                            <div class="flex flex-wrap gap-2 ml-auto">
+                                <button @click="releaseMasterRole(false)" 
+                                        class="btn btn-outline">
+                                    <i class="fas fa-sign-out-alt"></i> Lepaskan Saja
+                                </button>
+                                <button @click="releaseMasterRole(true)" 
+                                        class="btn btn-outline btn-danger">
+                                    <i class="fas fa-times-circle"></i> Lepaskan & Hapus Preferensi
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div x-show="currentAudio" class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-clock text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Durasi:</span>
+                                    <p class="font-medium" x-text="currentAudio?.duration + ' detik'"></p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-microphone text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Dari:</span>
+                                    <p class="font-medium" x-text="currentAudio?.fromClientId || 'Unknown'"></p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-history text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Status:</span>
+                                    <p class="font-medium" x-text="isPlaying ? 'Sedang Diputar' : 'Siap'"></p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Settings Section -->
-            <section class="card settings-section">
+            <!-- Connected Clients -->
+            <section x-show="connectedClients.length > 1" class="card mb-6">
                 <div class="card-header">
-                    <h2><i class="fas fa-sliders-h"></i> Pengaturan</h2>
+                    <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-network-wired"></i> Komputer Terhubung</h3>
+                    <span class="badge bg-blue-100 text-blue-800" x-text="connectedClients.length"></span>
                 </div>
                 <div class="card-body">
-                    <div class="settings-grid">
-                        <div class="setting">
-                            <label for="language">
-                                <i class="fas fa-language"></i> Bahasa
-                            </label>
-                            <select id="language" x-model="language" class="select-input">
-                                <option value="" disabled>Pilih bahasa...</option>
-                                <template x-for="lang in languages" :key="lang.code">
-                                    <option :value="lang.code" x-text="`${lang.name} (${lang.nativeName})`"></option>
-                                </template>
-                            </select>
-                        </div>
-
-                        <div class="setting">
-                            <label for="speed">
-                                <i class="fas fa-tachometer-alt"></i> Kecepatan
-                                <span class="speed-value" x-text="`${speed}x`"></span>
-                            </label>
-                            <div class="slider-container">
-                                <input type="range" id="speed" x-model="speed" 
-                                       min="0.5" max="2" step="0.1" class="slider">
-                                <div class="slider-labels">
-                                    <span>Lambat (0.5x)</span>
-                                    <span>Normal (1.0x)</span>
-                                    <span>Cepat (2.0x)</span>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <template x-for="client in connectedClients" :key="client.id">
+                            <div class="client-card p-4 border rounded-lg hover:shadow-md transition-shadow" :class="{ 'border-yellow-200 bg-yellow-50': client.isMaster, 'border-purple-200 bg-purple-50': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster }">
+                                <div class="flex items-start gap-3">
+                                    <div class="client-avatar flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center" :class="{ 'bg-yellow-100 text-yellow-700': client.isMaster, 'bg-purple-100 text-purple-700': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster, 'bg-gray-100 text-gray-700': !client.isMaster && !connectedClients.find(c => c.id === client.id)?.wantsToBeMaster }">
+                                        <i class="fas text-lg" :class="client.isMaster ? 'fa-crown' : (connectedClients.find(c => c.id === client.id)?.wantsToBeMaster ? 'fa-hourglass-half' : 'fa-desktop')"></i>
+                                    </div>
+                                    
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="font-medium truncate" x-text="client.id.substring(0, 12)"></h4>
+                                        <div class="flex flex-wrap items-center gap-2 mt-1">
+                                            <span class="text-xs px-2 py-1 rounded-full" :class="{ 'bg-yellow-100 text-yellow-800': client.isMaster, 'bg-gray-100 text-gray-800': !client.isMaster }" 
+                                                  x-text="client.isMaster ? 'Master Controller' : 'Client'"></span>
+                                            
+                                            <span x-show="connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster" 
+                                                  class="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-800 flex items-center gap-1">
+                                                <i class="fas fa-clock text-xs"></i> Ingin Master
+                                            </span>
+                                        </div>
+                                        <small class="text-gray-500 text-xs mt-2 block" x-text="formatTime(client.joinedAt)"></small>
+                                    </div>
+                                    
+                                    <div class="client-status" :class="{ 
+                                        'text-green-500': true, 
+                                        'text-yellow-500': client.isMaster,
+                                        'text-purple-500': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster
+                                    }">
+                                        <i class="fas fa-circle text-xs"></i>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="setting">
-                            <label for="priority">
-                                <i class="fas fa-flag"></i> Prioritas
-                            </label>
-                            <select id="priority" x-model="priority" class="select-input">
-                                <option value="low">Rendah</option>
-                                <option value="normal">Normal</option>
-                                <option value="high">Tinggi</option>
-                                <option value="urgent">Sangat Penting</option>
-                            </select>
-                        </div>
+                        </template>
                     </div>
                 </div>
             </section>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Input Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-keyboard"></i> Input Teks</h2>
+                        <div class="char-count text-sm text-gray-600">
+                            <span x-text="charCount"></span>/<span x-text="maxChars"></span> karakter
+                            <span x-show="wordCount > 0">• <span x-text="wordCount"></span> kata</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <textarea x-model="text"
+                                  @input="updateCharCount()"
+                                  placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara... (Audio akan diputar di komputer Master)"
+                                  rows="6"
+                                  :maxlength="maxChars"
+                                  :class="{'border-red-300 focus:ring-red-500 focus:border-red-500': charCount >= maxChars}"
+                                  class="text-input"></textarea>
+
+                        <div class="flex flex-wrap gap-2 mt-4">
+                            <button @click="clearText()" class="btn btn-outline">
+                                <i class="fas fa-trash-alt"></i> Hapus
+                            </button>
+                            <button @click="pasteText()" class="btn btn-outline">
+                                <i class="fas fa-paste"></i> Tempel
+                            </button>
+                            <button @click="loadExample()" class="btn btn-outline">
+                                <i class="fas fa-lightbulb"></i> Contoh
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Settings Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-sliders-h"></i> Pengaturan</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="space-y-6">
+                            <div class="setting">
+                                <label for="language" class="block font-medium mb-2 flex items-center gap-2">
+                                    <i class="fas fa-language"></i> Bahasa
+                                </label>
+                                <select id="language" x-model="language" class="select-input">
+                                    <option value="" disabled>Pilih bahasa...</option>
+                                    <template x-for="lang in languages" :key="lang.code">
+                                        <option :value="lang.code" x-text="`${lang.name} (${lang.nativeName})`"></option>
+                                    </template>
+                                </select>
+                            </div>
+
+                            <div class="setting">
+                                <label for="speed" class="block font-medium mb-2">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2">
+                                            <i class="fas fa-tachometer-alt"></i> Kecepatan
+                                        </div>
+                                        <span class="speed-value font-medium" x-text="`${speed}x`"></span>
+                                    </div>
+                                </label>
+                                <div class="slider-container">
+                                    <input type="range" id="speed" x-model="speed" 
+                                           min="0.5" max="2" step="0.1" class="slider">
+                                    <div class="flex justify-between text-xs text-gray-600 mt-2">
+                                        <span>Lambat (0.5x)</span>
+                                        <span>Normal (1.0x)</span>
+                                        <span>Cepat (2.0x)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="setting">
+                                <label for="priority" class="block font-medium mb-2 flex items-center gap-2">
+                                    <i class="fas fa-flag"></i> Prioritas
+                                </label>
+                                <select id="priority" x-model="priority" class="select-input">
+                                    <option value="low">Rendah</option>
+                                    <option value="normal">Normal</option>
+                                    <option value="high">Tinggi</option>
+                                    <option value="urgent">Sangat Penting</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
 
             <!-- Action Section -->
-            <section class="action-section">
+            <section class="mt-6 mb-8 flex flex-col sm:flex-row gap-4">
                 <button @click="convertToSpeech()" 
                         :disabled="isLoading || !text || isMaster && !isMasterReady"
-                        class="btn btn-primary btn-convert">
+                        class="btn btn-primary btn-convert py-3 px-6 text-lg flex-1">
                     <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
                     <span x-text="getConvertButtonText()"></span>
                 </button>
@@ -274,23 +470,23 @@
                 <button @click="convertAndBroadcast()" 
                         :disabled="isLoading || !text || !isMaster"
                         x-show="isMaster"
-                        class="btn btn-success">
+                        class="btn btn-success py-3 px-6 text-lg">
                     <i class="fas fa-broadcast-tower"></i>
                     <span>Kirim ke Semua</span>
                 </button>
             </section>
 
             <!-- Audio Player Section (Master Only) -->
-            <section x-show="isMaster && currentAudio" class="card audio-section">
+            <section x-show="isMaster && currentAudio" class="card mb-6">
                 <div class="card-header">
-                    <h3><i class="fas fa-music"></i> Pemutar Audio (Master)</h3>
-                    <div class="audio-source" x-show="currentAudio?.fromClientId">
+                    <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-music"></i> Pemutar Audio (Master)</h3>
+                    <div class="audio-source flex items-center gap-2 text-gray-600" x-show="currentAudio?.fromClientId">
                         <i class="fas fa-user"></i>
                         <span>Dari: <strong x-text="currentAudio?.fromClientId"></strong></span>
                     </div>
                 </div>
                 <div class="card-body">
-                    <div class="audio-player">
+                    <div class="space-y-6">
                         <audio id="masterAudioPlayer" 
                                :src="currentAudio?.audioUrl" 
                                controls
@@ -299,22 +495,31 @@
                                @ended="onAudioEnd()"
                                class="audio-element"></audio>
                         
-                        <div class="audio-info">
-                            <div class="info-item">
-                                <i class="fas fa-clock"></i>
-                                <span>Durasi: <strong x-text="currentAudio?.duration + ' detik'"></strong></span>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-clock text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Durasi:</span>
+                                    <p class="font-medium" x-text="currentAudio?.duration + ' detik'"></p>
+                                </div>
                             </div>
-                            <div class="info-item">
-                                <i class="fas fa-language"></i>
-                                <span>Bahasa: <strong x-text="getLanguageName(currentAudio?.language)"></strong></span>
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-language text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Bahasa:</span>
+                                    <p class="font-medium" x-text="getLanguageName(currentAudio?.language)"></p>
+                                </div>
                             </div>
-                            <div class="info-item">
-                                <i class="fas fa-text-height"></i>
-                                <span>Karakter: <strong x-text="currentAudio?.textLength"></strong></span>
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-text-height text-gray-600"></i>
+                                <div>
+                                    <span class="text-sm text-gray-600">Karakter:</span>
+                                    <p class="font-medium" x-text="currentAudio?.textLength"></p>
+                                </div>
                             </div>
                         </div>
                         
-                        <div class="audio-actions">
+                        <div class="flex flex-wrap gap-3">
                             <button @click="downloadAudio()" class="btn btn-outline">
                                 <i class="fas fa-download"></i> Unduh
                             </button>
@@ -330,16 +535,16 @@
             </section>
 
             <!-- Notification Section -->
-            <section x-show="notifications.length > 0" class="notifications-section">
-                <div class="notifications-container">
+            <section x-show="notifications.length > 0" class="mb-6">
+                <div class="notifications-container space-y-3">
                     <template x-for="notification in notifications.slice().reverse().slice(0, 3)" :key="notification.id">
-                        <div class="notification" :class="notification.type" @click="removeNotification(notification.id)">
-                            <i class="fas" :class="getNotificationIcon(notification.type)"></i>
-                            <div class="notification-content">
-                                <p x-text="notification.message"></p>
-                                <small x-text="formatTime(notification.timestamp)"></small>
+                        <div class="notification cursor-pointer" :class="notification.type" @click="removeNotification(notification.id)">
+                            <i class="fas mt-1" :class="getNotificationIcon(notification.type)"></i>
+                            <div class="flex-1">
+                                <p x-text="notification.message" class="font-medium"></p>
+                                <small class="text-sm opacity-75" x-text="formatTime(notification.timestamp)"></small>
                             </div>
-                            <button @click="removeNotification(notification.id)" class="btn-close">
+                            <button @click="removeNotification(notification.id)" class="btn-close text-lg opacity-70 hover:opacity-100">
                                 <i class="fas fa-times"></i>
                             </button>
                         </div>
@@ -348,32 +553,38 @@
             </section>
 
             <!-- History Section -->
-            <section x-show="history.length > 0" class="card history-section">
+            <section x-show="history.length > 0" class="card mb-6">
                 <div class="card-header">
-                    <h3><i class="fas fa-history"></i> Riwayat Pengiriman</h3>
-                    <button @click="clearHistory()" class="btn btn-small">
+                    <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-history"></i> Riwayat Pengiriman</h3>
+                    <button @click="clearHistory()" class="btn btn-small btn-outline">
                         <i class="fas fa-trash"></i> Hapus Semua
                     </button>
                 </div>
                 <div class="card-body">
-                    <div class="history-list">
+                    <div class="history-list space-y-3 max-h-80 overflow-y-auto p-1">
                         <template x-for="(item, index) in history.slice().reverse()" :key="item.id">
-                            <div class="history-item" :class="{ 'success': item.success, 'error': !item.success }">
-                                <div class="history-content">
-                                    <div class="history-text" x-text="truncateText(item.text, 80)"></div>
-                                    <div class="history-meta">
-                                        <span><i class="fas fa-language"></i> <span x-text="getLanguageCode(item.language)"></span></span>
-                                        <span><i class="fas fa-clock"></i> <span x-text="formatTime(item.timestamp)"></span></span>
-                                        <span><i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i></span>
+                            <div class="history-item p-4 rounded-lg border" :class="{ 'border-green-200 bg-green-50': item.success, 'border-red-200 bg-red-50': !item.success }">
+                                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div class="flex-1">
+                                        <div class="history-text font-medium mb-2" x-text="truncateText(item.text, 80)"></div>
+                                        <div class="history-meta flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                                            <span class="flex items-center gap-1"><i class="fas fa-language"></i> <span x-text="getLanguageCode(item.language)"></span></span>
+                                            <span class="flex items-center gap-1"><i class="fas fa-clock"></i> <span x-text="formatTime(item.timestamp)"></span></span>
+                                            <span class="flex items-center gap-1" :class="{ 'text-green-600': item.success, 'text-red-600': !item.success }">
+                                                <i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i>
+                                                <span x-text="item.success ? 'Berhasil' : 'Gagal'"></span>
+                                            </span>
+                                        </div>
                                     </div>
-                                </div>
-                                <div class="history-actions">
-                                    <button @click="loadHistoryItem(item)" class="btn btn-small">
-                                        <i class="fas fa-redo"></i> Gunakan Lagi
-                                    </button>
-                                    <button @click="removeHistoryItem(item.id)" class="btn btn-small btn-outline">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
+                                    
+                                    <div class="flex gap-2">
+                                        <button @click="loadHistoryItem(item)" class="btn btn-small">
+                                            <i class="fas fa-redo"></i> Gunakan Lagi
+                                        </button>
+                                        <button @click="removeHistoryItem(item.id)" class="btn btn-small btn-outline">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </template>
@@ -382,38 +593,46 @@
             </section>
 
             <!-- System Status -->
-            <section class="card status-section">
+            <section class="card">
                 <div class="card-header">
-                    <h3><i class="fas fa-chart-line"></i> Status Sistem</h3>
+                    <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-chart-line"></i> Status Sistem</h3>
                 </div>
                 <div class="card-body">
-                    <div class="status-grid">
-                        <div class="status-item">
-                            <i class="fas fa-server"></i>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                        <div class="status-item flex items-center gap-4">
+                            <div class="bg-blue-100 p-3 rounded-full">
+                                <i class="fas fa-server text-blue-600 text-xl"></i>
+                            </div>
                             <div>
-                                <h4>Server</h4>
-                                <p x-text="serverStatus === 'connected' ? 'Aktif' : 'Tidak Aktif'"></p>
+                                <h4 class="font-medium text-gray-600">Server</h4>
+                                <p class="text-xl font-bold" x-text="serverStatus === 'connected' ? 'Aktif' : 'Tidak Aktif'"></p>
                             </div>
                         </div>
-                        <div class="status-item">
-                            <i class="fas fa-users"></i>
+                        <div class="status-item flex items-center gap-4">
+                            <div class="bg-green-100 p-3 rounded-full">
+                                <i class="fas fa-users text-green-600 text-xl"></i>
+                            </div>
                             <div>
-                                <h4>Klien Terhubung</h4>
-                                <p x-text="connectedClients.length"></p>
+                                <h4 class="font-medium text-gray-600">Klien Terhubung</h4>
+                                <p class="text-xl font-bold" x-text="connectedClients.length"></p>
                             </div>
                         </div>
-                        <div class="status-item">
-                            <i class="fas fa-crown"></i>
+                        <div class="status-item flex items-center gap-4">
+                            <div class="bg-yellow-100 p-3 rounded-full">
+                                <i class="fas fa-crown text-yellow-600 text-xl"></i>
+                            </div>
                             <div>
-                                <h4>Master</h4>
-                                <p x-text="isMaster ? 'Anda' : masterClientId || 'Tidak Ada'"></p>
+                                <h4 class="font-medium text-gray-600">Master</h4>
+                                <p class="text-xl font-bold" x-text="isMaster ? 'Anda' : masterClientId || 'Tidak Ada'"></p>
                             </div>
                         </div>
-                        <div class="status-item">
-                            <i class="fas fa-history"></i>
+                        <div class="status-item flex items-center gap-4">
+                            <div class="bg-purple-100 p-3 rounded-full">
+                                <i class="fas fa-history text-purple-600 text-xl"></i>
+                            </div>
                             <div>
-                                <h4>Riwayat</h4>
-                                <p x-text="history.length + ' item'"></p>
+                                <h4 class="font-medium text-gray-600">Riwayat</h4>
+                                <p class="text-xl font-bold" x-text="history.length + ' item'"></p>
                             </div>
                         </div>
                     </div>
@@ -422,28 +641,30 @@
         </main>
 
         <!-- Footer -->
-        <footer class="footer">
-            <div class="footer-content">
-                <div class="footer-info">
-                    <p>TTS Multi-Client System v2.0 &copy; 2024</p>
-                    <p class="footer-note">Sistem Text-to-Speech dengan output audio terpusat</p>
-                    <p class="footer-feature">
-                        <i class="fas fa-sync-alt"></i> Fitur Master Auto-Reconnect Aktif
-                    </p>
-                </div>
-                <div class="footer-links">
-                    <button @click="showSystemInfo()" class="btn-link">
-                        <i class="fas fa-info-circle"></i> Info Sistem
-                    </button>
-                    <button @click="toggleMasterPreference()" class="btn-link">
-                        <i class="fas fa-crown"></i> Pengaturan Master
-                    </button>
-                    <button @click="testConnection()" class="btn-link">
-                        <i class="fas fa-wifi"></i> Test Koneksi
-                    </button>
-                    <button @click="showHelp()" class="btn-link">
-                        <i class="fas fa-question-circle"></i> Bantuan
-                    </button>
+        <footer class="bg-white border-t mt-8 py-6 px-4">
+            <div class="max-w-7xl mx-auto">
+                <div class="flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div class="footer-info text-center md:text-left">
+                        <p class="font-bold">TTS Multi-Client System v2.0 &copy; 2024</p>
+                        <p class="text-gray-600 mt-1">Sistem Text-to-Speech dengan output audio terpusat</p>
+                        <p class="text-sm text-blue-600 mt-1 flex items-center justify-center md:justify-start gap-2">
+                            <i class="fas fa-sync-alt"></i> Fitur Master Auto-Reconnect Aktif
+                        </p>
+                    </div>
+                    <div class="footer-links flex flex-wrap justify-center gap-4">
+                        <button @click="showSystemInfo()" class="btn-link">
+                            <i class="fas fa-info-circle"></i> Info Sistem
+                        </button>
+                        <button @click="toggleMasterPreference()" class="btn-link">
+                            <i class="fas fa-crown"></i> Pengaturan Master
+                        </button>
+                        <button @click="testConnection()" class="btn-link">
+                            <i class="fas fa-wifi"></i> Test Koneksi
+                        </button>
+                        <button @click="showHelp()" class="btn-link">
+                            <i class="fas fa-question-circle"></i> Bantuan
+                        </button>
+                    </div>
                 </div>
             </div>
         </footer>
@@ -454,94 +675,96 @@
     <div x-show="showMasterPreferenceModal" class="modal-overlay" @click.self="showMasterPreferenceModal = false">
         <div class="modal modal-lg">
             <div class="modal-header">
-                <h3><i class="fas fa-crown"></i> Pengaturan Master</h3>
-                <button @click="showMasterPreferenceModal = false" class="btn-close">
+                <h3 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-crown"></i> Pengaturan Master</h3>
+                <button @click="showMasterPreferenceModal = false" class="btn-close text-xl">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div class="master-preference">
+                <div class="space-y-8">
                     <div class="preference-section">
-                        <h4><i class="fas fa-user-crown"></i> Preferensi Master</h4>
+                        <h4 class="text-lg font-bold mb-4 flex items-center gap-2"><i class="fas fa-user-crown"></i> Preferensi Master</h4>
                         
-                        <div class="preference-item">
-                            <label class="checkbox-label">
-                                <input type="checkbox" x-model="wantsToBeMaster" @change="saveMasterPreference()">
-                                <div class="checkbox-content">
-                                    <strong>Ingin selalu menjadi Master</strong>
-                                    <p>Sistem akan otomatis meminta peran Master ketika Anda terhubung dan belum ada Master aktif.</p>
-                                </div>
-                            </label>
-                        </div>
-                        
-                        <div class="preference-item">
-                            <label class="checkbox-label">
-                                <input type="checkbox" x-model="autoRequestMaster" @change="saveMasterPreference()">
-                                <div class="checkbox-content">
-                                    <strong>Otomatis request Master setelah reconnect</strong>
-                                    <p>Akan mencoba mengambil peran Master jika terputus dan menyambung kembali.</p>
-                                </div>
-                            </label>
+                        <div class="space-y-4">
+                            <div class="preference-item">
+                                <label class="flex items-start gap-3 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                                    <input type="checkbox" x-model="wantsToBeMaster" @change="saveMasterPreference()" class="mt-1">
+                                    <div class="checkbox-content">
+                                        <strong class="block mb-1">Ingin selalu menjadi Master</strong>
+                                        <p class="text-gray-600 text-sm">Sistem akan otomatis meminta peran Master ketika Anda terhubung dan belum ada Master aktif.</p>
+                                    </div>
+                                </label>
+                            </div>
+                            
+                            <div class="preference-item">
+                                <label class="flex items-start gap-3 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                                    <input type="checkbox" x-model="autoRequestMaster" @change="saveMasterPreference()" class="mt-1">
+                                    <div class="checkbox-content">
+                                        <strong class="block mb-1">Otomatis request Master setelah reconnect</strong>
+                                        <p class="text-gray-600 text-sm">Akan mencoba mengambil peran Master jika terputus dan menyambung kembali.</p>
+                                    </div>
+                                </label>
+                            </div>
                         </div>
                     </div>
                     
                     <div class="preference-section">
-                        <h4><i class="fas fa-info-circle"></i> Informasi Master</h4>
-                        <div class="info-grid">
-                            <div class="info-item">
-                                <i class="fas fa-check-circle"></i>
+                        <h4 class="text-lg font-bold mb-4 flex items-center gap-2"><i class="fas fa-info-circle"></i> Informasi Master</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="info-item flex items-start gap-3 p-4 bg-blue-50 rounded-lg">
+                                <i class="fas fa-check-circle text-blue-600 mt-1"></i>
                                 <div>
-                                    <strong>Satu Master Aktif</strong>
-                                    <p>Hanya satu Master yang aktif dalam sistem</p>
+                                    <strong class="block">Satu Master Aktif</strong>
+                                    <p class="text-sm text-gray-600">Hanya satu Master yang aktif dalam sistem</p>
                                 </div>
                             </div>
-                            <div class="info-item">
-                                <i class="fas fa-clock"></i>
+                            <div class="info-item flex items-start gap-3 p-4 bg-green-50 rounded-lg">
+                                <i class="fas fa-clock text-green-600 mt-1"></i>
                                 <div>
-                                    <strong>Auto-Reconnect</strong>
-                                    <p>Master akan otomatis kembali saat reconnect</p>
+                                    <strong class="block">Auto-Reconnect</strong>
+                                    <p class="text-sm text-gray-600">Master akan otomatis kembali saat reconnect</p>
                                 </div>
                             </div>
-                            <div class="info-item">
-                                <i class="fas fa-save"></i>
+                            <div class="info-item flex items-start gap-3 p-4 bg-purple-50 rounded-lg">
+                                <i class="fas fa-save text-purple-600 mt-1"></i>
                                 <div>
-                                    <strong>Preferensi Tersimpan</strong>
-                                    <p>Preferensi disimpan di browser ini</p>
+                                    <strong class="block">Preferensi Tersimpan</strong>
+                                    <p class="text-sm text-gray-600">Preferensi disimpan di browser ini</p>
                                 </div>
                             </div>
-                            <div class="info-item">
-                                <i class="fas fa-sync-alt"></i>
+                            <div class="info-item flex items-start gap-3 p-4 bg-yellow-50 rounded-lg">
+                                <i class="fas fa-sync-alt text-yellow-600 mt-1"></i>
                                 <div>
-                                    <strong>State Recovery</strong>
-                                    <p>Status audio disimpan dan dipulihkan</p>
+                                    <strong class="block">State Recovery</strong>
+                                    <p class="text-sm text-gray-600">Status audio disimpan dan dipulihkan</p>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="preference-section current-status">
-                        <h4><i class="fas fa-chart-bar"></i> Status Saat Ini</h4>
-                        <div class="status-grid">
-                            <div class="status-item">
-                                <span>Status Master:</span>
+                    <div class="preference-section current-status p-4 bg-gray-50 rounded-lg">
+                        <h4 class="text-lg font-bold mb-4 flex items-center gap-2"><i class="fas fa-chart-bar"></i> Status Saat Ini</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="status-item flex justify-between">
+                                <span class="text-gray-600">Status Master:</span>
                                 <strong :class="masterStatusColor" x-text="masterStatusBadge"></strong>
                             </div>
-                            <div class="status-item">
-                                <span>Ingin Master:</span>
+                            <div class="status-item flex justify-between">
+                                <span class="text-gray-600">Ingin Master:</span>
                                 <strong x-text="wantsToBeMaster ? 'Ya' : 'Tidak'"></strong>
                             </div>
-                            <div class="status-item">
-                                <span>Auto-Reconnect:</span>
+                            <div class="status-item flex justify-between">
+                                <span class="text-gray-600">Auto-Reconnect:</span>
                                 <strong x-text="autoRequestMaster ? 'Aktif' : 'Nonaktif'"></strong>
                             </div>
-                            <div class="status-item">
-                                <span>Client ID:</span>
+                            <div class="status-item flex justify-between">
+                                <span class="text-gray-600">Client ID:</span>
                                 <strong x-text="clientIdShort || 'Belum terhubung'"></strong>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="preference-actions">
+                    <div class="preference-actions flex flex-wrap gap-3 justify-end">
                         <button @click="clearMasterPreference(); showMasterPreferenceModal = false" 
                                 class="btn btn-outline btn-danger">
                             <i class="fas fa-trash"></i> Hapus Semua Preferensi
@@ -557,56 +780,62 @@
 
     <!-- System Info Modal -->
     <div x-show="showSystemInfoModal" class="modal-overlay" @click.self="showSystemInfoModal = false">
-        <div class="modal">
+        <div class="modal max-w-3xl">
             <div class="modal-header">
-                <h3><i class="fas fa-info-circle"></i> Informasi Sistem</h3>
-                <button @click="showSystemInfoModal = false" class="btn-close">
+                <h3 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-info-circle"></i> Informasi Sistem</h3>
+                <button @click="showSystemInfoModal = false" class="btn-close text-xl">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div class="system-info">
-                    <h4>TTS Multi-Client System v2.0</h4>
-                    <p>Sistem ini memungkinkan beberapa komputer mengirim teks untuk dikonversi menjadi suara, tetapi output audio hanya dari satu komputer (Master Controller).</p>
+                <div class="system-info space-y-6">
+                    <div>
+                        <h4 class="text-lg font-bold mb-2">TTS Multi-Client System v2.0</h4>
+                        <p class="text-gray-700">Sistem ini memungkinkan beberapa komputer mengirim teks untuk dikonversi menjadi suara, tetapi output audio hanya dari satu komputer (Master Controller).</p>
+                    </div>
                     
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <strong><i class="fas fa-user-crown"></i> Master Controller:</strong>
-                            <p>Komputer yang memutar audio. Hanya satu master yang aktif.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="info-item p-4 bg-blue-50 rounded-lg">
+                            <strong class="flex items-center gap-2 mb-2"><i class="fas fa-user-crown"></i> Master Controller:</strong>
+                            <p class="text-sm text-gray-700">Komputer yang memutar audio. Hanya satu master yang aktif.</p>
                         </div>
-                        <div class="info-item">
-                            <strong><i class="fas fa-desktop"></i> Client Biasa:</strong>
-                            <p>Komputer yang hanya mengirim teks. Tidak memutar audio.</p>
+                        <div class="info-item p-4 bg-green-50 rounded-lg">
+                            <strong class="flex items-center gap-2 mb-2"><i class="fas fa-desktop"></i> Client Biasa:</strong>
+                            <p class="text-sm text-gray-700">Komputer yang hanya mengirim teks. Tidak memutar audio.</p>
                         </div>
-                        <div class="info-item">
-                            <strong><i class="fas fa-broadcast-tower"></i> Broadcast:</strong>
-                            <p>Master dapat mengirim audio ke semua komputer.</p>
+                        <div class="info-item p-4 bg-purple-50 rounded-lg">
+                            <strong class="flex items-center gap-2 mb-2"><i class="fas fa-broadcast-tower"></i> Broadcast:</strong>
+                            <p class="text-sm text-gray-700">Master dapat mengirim audio ke semua komputer.</p>
                         </div>
-                        <div class="info-item">
-                            <strong><i class="fas fa-history"></i> Antrian:</strong>
-                            <p>Teks dikirim saat tidak ada master akan masuk antrian.</p>
+                        <div class="info-item p-4 bg-yellow-50 rounded-lg">
+                            <strong class="flex items-center gap-2 mb-2"><i class="fas fa-history"></i> Antrian:</strong>
+                            <p class="text-sm text-gray-700">Teks dikirim saat tidak ada master akan masuk antrian.</p>
                         </div>
                     </div>
                     
-                    <h5><i class="fas fa-sync-alt"></i> Fitur Auto-Reconnect Master</h5>
-                    <p>Sistem ini memiliki fitur auto-reconnect untuk Master Controller:</p>
-                    <ul>
-                        <li>Master preference disimpan di localStorage</li>
-                        <li>Otomatis request role Master saat reconnect</li>
-                        <li>State audio disimpan dan dipulihkan</li>
-                        <li>Max 3x reconnect attempts</li>
-                        <li>Preferensi bisa diatur melalui "Pengaturan Master"</li>
-                    </ul>
+                    <div>
+                        <h5 class="font-bold mb-2 flex items-center gap-2"><i class="fas fa-sync-alt"></i> Fitur Auto-Reconnect Master</h5>
+                        <p class="text-gray-700 mb-3">Sistem ini memiliki fitur auto-reconnect untuk Master Controller:</p>
+                        <ul class="list-disc pl-5 space-y-1 text-gray-700">
+                            <li>Master preference disimpan di localStorage</li>
+                            <li>Otomatis request role Master saat reconnect</li>
+                            <li>State audio disimpan dan dipulihkan</li>
+                            <li>Max 3x reconnect attempts</li>
+                            <li>Preferensi bisa diatur melalui "Pengaturan Master"</li>
+                        </ul>
+                    </div>
                     
-                    <h5>Alur Kerja:</h5>
-                    <ol>
-                        <li>Klien terhubung ke server</li>
-                        <li>Satu klien menjadi Master (manual atau auto)</li>
-                        <li>Klien lain mengirim teks</li>
-                        <li>Server konversi teks ke audio</li>
-                        <li>Audio dikirim ke Master</li>
-                        <li>Master memutar audio</li>
-                    </ol>
+                    <div>
+                        <h5 class="font-bold mb-2">Alur Kerja:</h5>
+                        <ol class="list-decimal pl-5 space-y-2 text-gray-700">
+                            <li>Klien terhubung ke server</li>
+                            <li>Satu klien menjadi Master (manual atau auto)</li>
+                            <li>Klien lain mengirim teks</li>
+                            <li>Server konversi teks ke audio</li>
+                            <li>Audio dikirim ke Master</li>
+                            <li>Master memutar audio</li>
+                        </ol>
+                    </div>
                 </div>
             </div>
         </div>
@@ -614,64 +843,81 @@
 
     <!-- Help Modal -->
     <div x-show="showHelpModal" class="modal-overlay" @click.self="showHelpModal = false">
-        <div class="modal">
+        <div class="modal max-w-3xl">
             <div class="modal-header">
-                <h3><i class="fas fa-question-circle"></i> Panduan Penggunaan</h3>
-                <button @click="showHelpModal = false" class="btn-close">
+                <h3 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-question-circle"></i> Panduan Penggunaan</h3>
+                <button @click="showHelpModal = false" class="btn-close text-xl">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div class="help-content">
-                    <h4>Cara Menggunakan:</h4>
+                <div class="help-content space-y-6">
+                    <h4 class="text-lg font-bold">Cara Menggunakan:</h4>
                     
-                    <div class="step">
-                        <div class="step-number">1</div>
+                    <div class="step flex gap-4">
+                        <div class="step-number flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">1</div>
                         <div class="step-content">
-                            <h5>Persiapan</h5>
-                            <p>Pastikan semua komputer terhubung ke jaringan yang sama. Buka alamat server di semua browser.</p>
+                            <h5 class="font-bold mb-1">Persiapan</h5>
+                            <p class="text-gray-700">Pastikan semua komputer terhubung ke jaringan yang sama. Buka alamat server di semua browser.</p>
                         </div>
                     </div>
                     
-                    <div class="step">
-                        <div class="step-number">2</div>
+                    <div class="step flex gap-4">
+                        <div class="step-number flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">2</div>
                         <div class="step-content">
-                            <h5>Menentukan Master</h5>
-                            <p>Di komputer yang memiliki speaker (output audio), klik "Jadikan Master". Komputer ini akan memutar semua audio.</p>
-                            <p><strong>Tips:</strong> Aktifkan "Ingin selalu menjadi Master" di Pengaturan Master untuk auto-reconnect.</p>
+                            <h5 class="font-bold mb-1">Menentukan Master</h5>
+                            <p class="text-gray-700 mb-2">Di komputer yang memiliki speaker (output audio), klik "Jadikan Master". Komputer ini akan memutar semua audio.</p>
+                            <p class="text-sm text-blue-600"><strong>Tips:</strong> Aktifkan "Ingin selalu menjadi Master" di Pengaturan Master untuk auto-reconnect.</p>
                         </div>
                     </div>
                     
-                    <div class="step">
-                        <div class="step-number">3</div>
+                    <div class="step flex gap-4">
+                        <div class="step-number flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">3</div>
                         <div class="step-content">
-                            <h5>Mengirim Teks</h5>
-                            <p>Di komputer lain (client biasa), masukkan teks, pilih bahasa, dan klik "Kirim ke Master". Audio akan diputar di komputer Master.</p>
+                            <h5 class="font-bold mb-1">Mengirim Teks</h5>
+                            <p class="text-gray-700">Di komputer lain (client biasa), masukkan teks, pilih bahasa, dan klik "Kirim ke Master". Audio akan diputar di komputer Master.</p>
                         </div>
                     </div>
                     
-                    <div class="step">
-                        <div class="step-number">4</div>
+                    <div class="step flex gap-4">
+                        <div class="step-number flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">4</div>
                         <div class="step-content">
-                            <h5>Broadcast (Opsional)</h5>
-                            <p>Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua".</p>
+                            <h5 class="font-bold mb-1">Broadcast (Opsional)</h5>
+                            <p class="text-gray-700">Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua".</p>
                         </div>
                     </div>
                     
-                    <h5>Troubleshooting:</h5>
-                    <ul>
-                        <li><strong>Audio tidak keluar:</strong> Pastikan komputer Master memiliki speaker aktif dan volume cukup.</li>
-                        <li><strong>Tidak bisa jadi Master:</strong> Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</li>
-                        <li><strong>Koneksi terputus:</strong> Sistem akan otomatis reconnect. Master akan coba kembali sebagai Master.</li>
-                        <li><strong>Teks tidak terkirim:</strong> Pastikan ada Master yang aktif dan teks tidak kosong.</li>
-                        <li><strong>Auto-reconnect tidak bekerja:</strong> Cek "Pengaturan Master" dan pastikan preferensi sudah disimpan.</li>
-                    </ul>
+                    <div>
+                        <h5 class="font-bold mb-2">Troubleshooting:</h5>
+                        <ul class="space-y-3">
+                            <li class="p-3 bg-red-50 rounded-lg border border-red-100">
+                                <strong class="block mb-1">Audio tidak keluar:</strong>
+                                <p class="text-sm text-gray-700">Pastikan komputer Master memiliki speaker aktif dan volume cukup.</p>
+                            </li>
+                            <li class="p-3 bg-yellow-50 rounded-lg border border-yellow-100">
+                                <strong class="block mb-1">Tidak bisa jadi Master:</strong>
+                                <p class="text-sm text-gray-700">Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</p>
+                            </li>
+                            <li class="p-3 bg-green-50 rounded-lg border border-green-100">
+                                <strong class="block mb-1">Koneksi terputus:</strong>
+                                <p class="text-sm text-gray-700">Sistem akan otomatis reconnect. Master akan coba kembali sebagai Master.</p>
+                            </li>
+                            <li class="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                                <strong class="block mb-1">Teks tidak terkirim:</strong>
+                                <p class="text-sm text-gray-700">Pastikan ada Master yang aktif dan teks tidak kosong.</p>
+                            </li>
+                            <li class="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                <strong class="block mb-1">Auto-reconnect tidak bekerja:</strong>
+                                <p class="text-sm text-gray-700">Cek "Pengaturan Master" dan pastikan preferensi sudah disimpan.</p>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Audio Element (Hidden) -->
-    <audio id="hiddenAudio" style="display: none;"></audio>
+    <audio id="hiddenAudio" class="hidden"></audio>
 </body>
 </html>
