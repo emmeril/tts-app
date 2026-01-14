@@ -298,19 +298,32 @@ function ttsApp() {
             });
             
             this.socket.on('tts-audio', (data) => {
-                console.log('Received TTS audio:', data);
-                
-                // Store the audio data
-                this.currentAudio = data;
-                this.saveAudioState(); // Save audio state
-                
-                // Auto-play if this client is master
-                if (this.isMaster && data.audioUrl) {
-                    this.playAudio();
-                } else if (this.isMaster) {
-                    this.showNotification(`Menerima audio dari ${data.fromClientId}`, 'info');
-                }
-            });
+    console.log('Received TTS audio for master:', {
+        fromClient: data.fromClientId,
+        audioUrl: data.audioUrl ? 'Present' : 'Missing',
+        textPreview: data.text ? data.text.substring(0, 50) + '...' : 'No text'
+    });
+    
+    // Store the audio data
+    this.currentAudio = data;
+    this.saveAudioState();
+    
+    // Auto-play jika client ini adalah master dan ada URL audio
+    if (this.isMaster && data.audioUrl) {
+        console.log('Master received audio, attempting to auto-play...');
+        
+        // Tunggu sebentar untuk memastikan state terupdate
+        setTimeout(() => {
+            this.playAudio();
+        }, 200);
+        
+        // Tampilkan notifikasi
+        const clientIdShort = data.fromClientId ? data.fromClientId.substring(0, 8) : 'unknown';
+        this.showNotification(`Menerima audio dari ${clientIdShort}`, 'info');
+    } else if (this.isMaster) {
+        this.showNotification(`Menerima audio tanpa URL dari ${data.fromClientId}`, 'warning');
+    }
+});
             
             this.socket.on('tts-audio-broadcast', (data) => {
                 this.currentAudio = data;
@@ -610,63 +623,85 @@ function ttsApp() {
         },
         
         // Play audio
-      
-playAudio() {
+      playAudio() {
     if (!this.currentAudio || !this.currentAudio.audioUrl) {
         this.showNotification('Tidak ada audio untuk diputar', 'error');
         return;
     }
     
-    // Gunakan setTimeout untuk memastikan DOM sudah di-render
+    console.log('Attempting to play audio:', {
+        isMaster: this.isMaster,
+        audioUrl: this.currentAudio.audioUrl,
+        fromClient: this.currentAudio.fromClientId
+    });
+    
+    // Gunakan setTimeout untuk memastikan DOM siap
     setTimeout(() => {
-        const audioElement = this.isMaster ? 
-            document.getElementById('masterAudioPlayer') : 
-            document.getElementById('hiddenAudio');
+        let audioElement;
+        
+        if (this.isMaster) {
+            // Master menggunakan elemen audio yang terlihat
+            audioElement = document.getElementById('masterAudioPlayer');
+            console.log('Master audio element found:', !!audioElement);
+            
+            if (!audioElement) {
+                // Fallback ke hiddenAudio jika masterAudioPlayer tidak ditemukan
+                audioElement = document.getElementById('hiddenAudio');
+                console.warn('Master audio element not found, using hidden audio');
+            }
+        } else {
+            // Client biasa menggunakan hidden audio
+            audioElement = document.getElementById('hiddenAudio');
+        }
         
         if (audioElement) {
-            // Jika audio element sudah punya src yang sama, reset dulu
-            if (audioElement.src === this.currentAudio.audioUrl) {
-                audioElement.currentTime = 0;
-            } else {
-                audioElement.src = this.currentAudio.audioUrl;
-            }
+            // Set audio source
+            audioElement.src = this.currentAudio.audioUrl;
             
-            audioElement.play().then(() => {
-                this.isPlaying = true;
-                
-                // Notify server about playback status
-                this.socket.emit('audio-status', 'playing');
-                
-                // If this client is master, notify others to play
-                if (this.isMaster) {
-                    this.socket.emit('play-audio', this.currentAudio);
-                }
-                
-                this.showNotification('Memutar audio...', 'success');
-            }).catch(error => {
-                console.error('Play error:', error);
-                this.showNotification('Gagal memutar audio: ' + error.message, 'error');
-                
-                // Jika gagal, coba lagi dengan hiddenAudio sebagai fallback
-                if (this.isMaster) {
-                    const hiddenAudio = document.getElementById('hiddenAudio');
-                    if (hiddenAudio) {
-                        hiddenAudio.src = this.currentAudio.audioUrl;
-                        hiddenAudio.play().catch(e => console.error('Fallback play error:', e));
+            // Tambahkan event listener untuk debugging
+            audioElement.onerror = (e) => {
+                console.error('Audio element error:', e);
+                this.showNotification('Error memutar audio', 'error');
+            };
+            
+            // Coba play audio
+            const playPromise = audioElement.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    console.log('Audio playback started successfully');
+                    this.isPlaying = true;
+                    
+                    // Notify server about playback status
+                    this.socket.emit('audio-status', 'playing');
+                    
+                    // Jika master, beri tahu client lain untuk play
+                    if (this.isMaster) {
+                        this.socket.emit('play-audio', this.currentAudio);
                     }
-                }
-            });
-        } else {
-            console.error('Audio element not found');
-            // Fallback untuk semua kasus ke hiddenAudio
-            const hiddenAudio = document.getElementById('hiddenAudio');
-            if (hiddenAudio) {
-                hiddenAudio.src = this.currentAudio.audioUrl;
-                hiddenAudio.play().catch(e => console.error('Fallback play error:', e));
+                    
+                    this.showNotification('Memutar audio...', 'success');
+                }).catch(error => {
+                    console.error('Play error:', error);
+                    
+                    // Autoplay policy issue - tampilkan pesan ke user
+                    if (error.name === 'NotAllowedError') {
+                        this.showNotification(
+                            'Browser memblokir auto-play. Klik tombol play manual di player audio.',
+                            'warning'
+                        );
+                    } else {
+                        this.showNotification('Gagal memutar audio: ' + error.message, 'error');
+                    }
+                });
             }
+        } else {
+            console.error('No audio element found in DOM');
+            this.showNotification('Elemen audio tidak ditemukan', 'error');
         }
-    }, 100); // Delay 100ms untuk pastikan DOM ready
+    }, 100); // Delay kecil untuk memastikan DOM siap
 },
+
         
         // Pause audio
         pauseAudio() {
