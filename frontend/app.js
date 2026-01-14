@@ -33,28 +33,106 @@ function ttsApp() {
         showSystemInfoModal: false,
         showHelpModal: false,
         
+        // Master Recovery State
+        wasMasterBeforeDisconnect: false,
+        masterAutoRecoveryAttempts: 0,
+        maxAutoRecoveryAttempts: 3,
+        isAttemptingMasterRecovery: false,
+        lastMasterStatus: null,
+        
         // Initialize
         init() {
             this.updateCharCount();
             this.loadLanguages();
             this.loadHistory();
+            
+            // Load master status dari localStorage
+            this.loadMasterStatus();
+            
             this.initSocket();
             
-            // Auto-reconnect jika terputus
+            // Auto-reconnect jika terputus - lebih agresif jika sebelumnya master
             setInterval(() => {
                 if (!this.socket || !this.socket.connected) {
                     this.serverStatus = 'disconnected';
                     this.serverStatusText = 'Mencoba menyambung ulang...';
-                    this.initSocket();
+                    
+                    // Jika sebelumnya master, coba reconnect lebih cepat
+                    if (this.wasMasterBeforeDisconnect) {
+                        this.initSocket();
+                    }
                 }
-            }, 5000);
+            }, this.wasMasterBeforeDisconnect ? 3000 : 5000);
             
-            // Send periodic ping
+            // Send periodic ping dengan status master
             setInterval(() => {
                 if (this.socket && this.socket.connected) {
-                    this.socket.emit('ping', { timestamp: Date.now() });
+                    this.socket.emit('ping', { 
+                        timestamp: Date.now(),
+                        isMaster: this.isMaster,
+                        wasMasterBeforeDisconnect: this.wasMasterBeforeDisconnect
+                    });
                 }
             }, 30000);
+            
+            // Monitor master status untuk recovery
+            setInterval(() => {
+                if (this.wasMasterBeforeDisconnect && !this.isMaster && this.serverStatus === 'connected') {
+                    // Jika sudah terhubung tapi belum menjadi master, coba recovery
+                    if (!this.isAttemptingMasterRecovery && this.masterAutoRecoveryAttempts < this.maxAutoRecoveryAttempts) {
+                        this.attemptMasterRecovery();
+                    }
+                }
+            }, 10000);
+        },
+        
+        // Load master status dari localStorage
+        loadMasterStatus() {
+            try {
+                const savedWasMaster = localStorage.getItem('wasMaster');
+                const savedAttempts = localStorage.getItem('masterRecoveryAttempts');
+                const savedMasterInfo = localStorage.getItem('lastMasterInfo');
+                
+                if (savedWasMaster === 'true') {
+                    this.wasMasterBeforeDisconnect = true;
+                    this.masterAutoRecoveryAttempts = parseInt(savedAttempts || '0');
+                }
+                
+                if (savedMasterInfo) {
+                    this.lastMasterStatus = JSON.parse(savedMasterInfo);
+                }
+            } catch (error) {
+                console.error('Failed to load master status:', error);
+            }
+        },
+        
+        // Save master status ke localStorage
+        saveMasterStatus() {
+            try {
+                localStorage.setItem('wasMaster', this.wasMasterBeforeDisconnect.toString());
+                localStorage.setItem('masterRecoveryAttempts', this.masterAutoRecoveryAttempts.toString());
+                
+                const masterInfo = {
+                    clientId: this.clientId,
+                    shortId: this.clientShortId,
+                    timestamp: new Date().toISOString(),
+                    isMaster: this.isMaster
+                };
+                localStorage.setItem('lastMasterInfo', JSON.stringify(masterInfo));
+            } catch (error) {
+                console.error('Failed to save master status:', error);
+            }
+        },
+        
+        // Clear master status
+        clearMasterStatus() {
+            this.wasMasterBeforeDisconnect = false;
+            this.masterAutoRecoveryAttempts = 0;
+            this.isAttemptingMasterRecovery = false;
+            
+            localStorage.removeItem('wasMaster');
+            localStorage.removeItem('masterRecoveryAttempts');
+            localStorage.removeItem('lastMasterInfo');
         },
         
         // Initialize Socket.io connection
@@ -67,9 +145,11 @@ function ttsApp() {
             // Create new connection
             this.socket = io({
                 reconnection: true,
-                reconnectionAttempts: 5,
+                reconnectionAttempts: 10,
                 reconnectionDelay: 1000,
-                timeout: 20000
+                reconnectionDelayMax: 5000,
+                timeout: 20000,
+                transports: ['websocket', 'polling']
             });
             
             // Socket event listeners
@@ -83,8 +163,57 @@ function ttsApp() {
                     userAgent: navigator.userAgent,
                     platform: navigator.platform,
                     screen: `${window.screen.width}x${window.screen.height}`,
-                    url: window.location.href
+                    url: window.location.href,
+                    wasMaster: this.wasMasterBeforeDisconnect,
+                    recoveryAttempts: this.masterAutoRecoveryAttempts
                 });
+                
+                // Jika sebelumnya adalah master dan terputus, coba recovery
+                if (this.wasMasterBeforeDisconnect && !this.isAttemptingMasterRecovery && !this.isMaster) {
+                    setTimeout(() => {
+                        this.attemptMasterRecovery();
+                    }, 2000);
+                }
+            });
+            
+            this.socket.on('reconnect', (attemptNumber) => {
+                console.log('Socket reconnected, attempt:', attemptNumber);
+                this.serverStatus = 'connected';
+                this.serverStatusText = 'Terhubung kembali ke server';
+                
+                // Jika sebelumnya master, coba recovery
+                if (this.wasMasterBeforeDisconnect && !this.isAttemptingMasterRecovery && !this.isMaster) {
+                    this.attemptMasterRecovery();
+                }
+            });
+            
+            this.socket.on('reconnect_attempt', (attemptNumber) => {
+                console.log('Attempting to reconnect:', attemptNumber);
+                this.serverStatus = 'reconnecting';
+                this.serverStatusText = `Menyambung ulang... (Percobaan ${attemptNumber})`;
+                
+                // Jika sebelumnya master, update status
+                if (this.wasMasterBeforeDisconnect) {
+                    this.serverStatusText = `Master mencoba menyambung ulang... (Percobaan ${attemptNumber})`;
+                }
+            });
+            
+            this.socket.on('reconnect_error', (error) => {
+                console.error('Reconnection error:', error);
+                this.serverStatus = 'error';
+                this.serverStatusText = 'Gagal menyambung ulang';
+            });
+            
+            this.socket.on('reconnect_failed', () => {
+                console.error('Reconnection failed');
+                this.serverStatus = 'failed';
+                this.serverStatusText = 'Gagal total menyambung ulang';
+                
+                // Reset status jika gagal total
+                if (this.wasMasterBeforeDisconnect && this.masterAutoRecoveryAttempts >= this.maxAutoRecoveryAttempts) {
+                    this.clearMasterStatus();
+                    this.showNotification('Gagal mengembalikan status Master. Silakan request manual.', 'error');
+                }
             });
             
             this.socket.on('welcome', (data) => {
@@ -96,6 +225,11 @@ function ttsApp() {
                 if (data.hasMaster && data.masterShortId) {
                     this.showNotification(`Master aktif: ${data.masterShortId}. Anda dapat mengirim teks ke master.`, 'info');
                 }
+                
+                // Jika server mendukung recovery dan client sebelumnya adalah master
+                if (data.supportsRecovery && this.wasMasterBeforeDisconnect) {
+                    this.showNotification('Sistem mendukung recovery Master. Status Anda akan dicoba dikembalikan.', 'info');
+                }
             });
             
             this.socket.on('connection-status', (data) => {
@@ -105,6 +239,14 @@ function ttsApp() {
                 this.masterClientId = data.masterClient;
                 this.masterShortId = data.masterShortId;
                 this.connectedClients = data.connectedClients || [];
+                
+                // Update master status
+                if (this.isMaster) {
+                    this.wasMasterBeforeDisconnect = true;
+                    this.masterAutoRecoveryAttempts = 0;
+                    this.isAttemptingMasterRecovery = false;
+                    this.saveMasterStatus();
+                }
             });
             
             this.socket.on('client-connected', (data) => {
@@ -125,7 +267,15 @@ function ttsApp() {
                 this.isMaster = (this.clientId === data.masterClientId);
                 
                 if (this.isMaster) {
-                    this.showNotification('Anda sekarang adalah Master Controller! Audio hanya akan diputar di komputer ini.', 'success');
+                    this.wasMasterBeforeDisconnect = true;
+                    this.masterAutoRecoveryAttempts = 0;
+                    this.isAttemptingMasterRecovery = false;
+                    this.saveMasterStatus();
+                    
+                    const message = data.isRecovery ? 
+                        'Status Master berhasil dikembalikan!' : 
+                        'Anda sekarang adalah Master Controller! Audio hanya akan diputar di komputer ini.';
+                    this.showNotification(message, 'success');
                 } else if (data.masterShortId) {
                     this.showNotification(`${data.masterShortId} sekarang menjadi Master`, 'info');
                 }
@@ -134,13 +284,27 @@ function ttsApp() {
             this.socket.on('master-role-granted', (data) => {
                 this.isMaster = true;
                 this.isRequestingMaster = false;
+                this.isAttemptingMasterRecovery = false;
+                this.masterAutoRecoveryAttempts = 0;
+                this.wasMasterBeforeDisconnect = true;
                 this.masterClientId = this.clientId;
                 this.masterShortId = data.shortClientId || this.formatClientId(data.clientId);
-                this.showNotification(data.message || 'Anda sekarang adalah Master Controller! Audio hanya akan diputar di komputer ini.', 'success');
+                
+                const message = data.isRecovery ? 
+                    'Status Master berhasil dikembalikan!' : 
+                    'Anda sekarang adalah Master Controller! Audio hanya akan diputar di komputer ini.';
+                
+                this.showNotification(message, 'success');
+                this.saveMasterStatus();
+                
+                // Clear any pending recovery attempts
+                this.clearRecoveryTimeout();
             });
             
             this.socket.on('master-role-denied', (data) => {
                 this.isRequestingMaster = false;
+                this.isAttemptingMasterRecovery = false;
+                
                 let message = `Gagal menjadi Master: ${data.reason}`;
                 
                 // Tampilkan ID master yang sedang aktif
@@ -149,25 +313,72 @@ function ttsApp() {
                 }
                 
                 this.showNotification(message, 'error');
+                
+                // Jika ini recovery attempt, coba lagi nanti
+                if (data.isRecoveryAttempt && this.wasMasterBeforeDisconnect) {
+                    if (this.masterAutoRecoveryAttempts < this.maxAutoRecoveryAttempts) {
+                        setTimeout(() => {
+                            this.attemptMasterRecovery();
+                        }, 10000); // Coba lagi dalam 10 detik
+                    } else {
+                        this.showNotification('Gagal mengembalikan status Master setelah beberapa percobaan', 'warning');
+                        this.clearMasterStatus();
+                    }
+                }
             });
             
             this.socket.on('master-role-released', (data) => {
                 this.isMaster = false;
                 this.masterClientId = null;
                 this.masterShortId = null;
+                
+                // Hanya clear jika sengaja melepas
+                if (data.isIntentional) {
+                    this.clearMasterStatus();
+                }
+                
                 this.showNotification(data.message || 'Anda telah melepaskan peran Master', 'info');
             });
             
             this.socket.on('master-disconnected', (data) => {
+                // Jika master yang terputus adalah diri sendiri, tandai untuk recovery
+                if (this.isMaster || this.clientId === data.disconnectedMasterId) {
+                    this.wasMasterBeforeDisconnect = true;
+                    this.isMaster = false;
+                    this.saveMasterStatus();
+                    
+                    if (data.canRecover) {
+                        this.showNotification('Anda terputus sebagai Master. Mencoba mengembalikan dalam 5 detik...', 'warning');
+                        
+                        // Tunggu 5 detik sebelum mencoba recovery
+                        setTimeout(() => {
+                            this.attemptMasterRecovery();
+                        }, 5000);
+                    }
+                }
+                
                 this.masterClientId = null;
                 this.masterShortId = null;
                 const disconnectedShortId = data.disconnectedMasterShortId || this.formatClientId(data.disconnectedMasterId);
                 this.showNotification(`Master Controller terputus: ${disconnectedShortId}`, 'warning');
             });
             
+            this.socket.on('master-released', (data) => {
+                // Jika master sengaja melepas peran, reset status
+                if (data.wasIntentional && data.oldMasterId === this.clientId) {
+                    this.clearMasterStatus();
+                }
+            });
+            
             this.socket.on('master-needed', (data) => {
                 if (!this.isMaster) {
-                    this.showNotification(`Master diperlukan! ${data.pendingRequests} permintaan dalam antrian.`, 'warning');
+                    // Jika sebelumnya master, coba ambil kembali
+                    if (this.wasMasterBeforeDisconnect) {
+                        this.showNotification(`Master diperlukan! Anda sebelumnya adalah Master. Mencoba mengembalikan...`, 'warning');
+                        this.attemptMasterRecovery();
+                    } else {
+                        this.showNotification(`Master diperlukan! ${data.pendingRequests} permintaan dalam antrian.`, 'warning');
+                    }
                 }
             });
             
@@ -277,10 +488,20 @@ function ttsApp() {
             });
             
             this.socket.on('disconnect', (reason) => {
+                // Jika saat disconnect adalah master, tandai untuk recovery
+                if (this.isMaster) {
+                    this.wasMasterBeforeDisconnect = true;
+                    this.saveMasterStatus();
+                    this.showNotification('Koneksi terputus. Akan mencoba kembali menjadi Master...', 'warning');
+                }
+                
                 this.serverStatus = 'disconnected';
                 this.serverStatusText = 'Terputus dari server';
                 this.showNotification('Terputus dari server. Mencoba menyambung ulang...', 'error');
                 console.log('Socket disconnected:', reason);
+                
+                // Clear recovery timeout
+                this.clearRecoveryTimeout();
             });
             
             this.socket.on('connect_error', (error) => {
@@ -293,30 +514,118 @@ function ttsApp() {
                 console.error('Socket error:', error);
                 this.showNotification('Kesalahan koneksi socket', 'error');
             });
+            
+            // Master recovery events
+            this.socket.on('master-recovery-available', (data) => {
+                if (this.wasMasterBeforeDisconnect && !this.isMaster) {
+                    this.showNotification('Recovery Master tersedia. Mencoba mengembalikan...', 'info');
+                    this.attemptMasterRecovery();
+                }
+            });
+            
+            this.socket.on('master-recovery-success', (data) => {
+                this.isMaster = true;
+                this.wasMasterBeforeDisconnect = true;
+                this.masterAutoRecoveryAttempts = 0;
+                this.isAttemptingMasterRecovery = false;
+                this.saveMasterStatus();
+                
+                this.showNotification('Status Master berhasil dipulihkan secara otomatis!', 'success');
+            });
+        },
+        
+        // Recovery timeout handler
+        recoveryTimeout: null,
+        
+        // Clear recovery timeout
+        clearRecoveryTimeout() {
+            if (this.recoveryTimeout) {
+                clearTimeout(this.recoveryTimeout);
+                this.recoveryTimeout = null;
+            }
+        },
+        
+        // Attempt master recovery
+        attemptMasterRecovery() {
+            if (this.isAttemptingMasterRecovery || this.isMaster) return;
+            
+            this.isAttemptingMasterRecovery = true;
+            this.masterAutoRecoveryAttempts++;
+            
+            if (this.masterAutoRecoveryAttempts > this.maxAutoRecoveryAttempts) {
+                this.showNotification('Gagal mengembalikan status Master setelah beberapa percobaan', 'warning');
+                this.clearMasterStatus();
+                this.isAttemptingMasterRecovery = false;
+                return;
+            }
+            
+            this.showNotification(`Mencoba mengembalikan status Master... (Percobaan ${this.masterAutoRecoveryAttempts})`, 'info');
+            
+            // Tunggu 2 detik untuk memastikan koneksi stabil
+            this.recoveryTimeout = setTimeout(() => {
+                if (this.socket && this.socket.connected) {
+                    this.requestMasterRole(true);
+                    
+                    // Timeout jika tidak ada respon
+                    setTimeout(() => {
+                        if (this.isAttemptingMasterRecovery && !this.isMaster) {
+                            this.isAttemptingMasterRecovery = false;
+                            if (this.masterAutoRecoveryAttempts < this.maxAutoRecoveryAttempts) {
+                                this.showNotification('Timeout recovery, akan mencoba lagi dalam 10 detik...', 'warning');
+                                setTimeout(() => this.attemptMasterRecovery(), 10000);
+                            }
+                        }
+                    }, 8000);
+                } else {
+                    this.isAttemptingMasterRecovery = false;
+                }
+            }, 2000);
         },
         
         // Request master role
-        requestMasterRole() {
+        requestMasterRole(isRecovery = false) {
             if (this.isMaster) return;
             
             this.isRequestingMaster = true;
             this.socket.emit('request-master-role', {
                 timestamp: new Date().toISOString(),
                 clientId: this.clientId,
-                shortClientId: this.clientShortId
+                shortClientId: this.clientShortId,
+                isRecoveryAttempt: isRecovery,
+                previousMaster: isRecovery ? this.wasMasterBeforeDisconnect : false,
+                recoveryAttempts: this.masterAutoRecoveryAttempts
             });
             
-            this.showNotification('Mengirim permintaan menjadi Master...', 'info');
+            const message = isRecovery ? 
+                'Mencoba mengembalikan status Master...' : 
+                'Mengirim permintaan menjadi Master...';
+            this.showNotification(message, 'info');
         },
         
         // Release master role
         releaseMasterRole() {
             if (!this.isMaster) return;
             
-            this.socket.emit('release-master-role');
+            this.socket.emit('release-master-role', {
+                isIntentional: true,
+                timestamp: new Date().toISOString(),
+                clientId: this.clientId,
+                shortClientId: this.clientShortId
+            });
+            
             this.isMaster = false;
             this.masterClientId = null;
             this.masterShortId = null;
+            this.clearMasterStatus();
+        },
+        
+        // Force master recovery (manual)
+        forceMasterRecovery() {
+            this.clearMasterStatus();
+            this.wasMasterBeforeDisconnect = true;
+            this.masterAutoRecoveryAttempts = 0;
+            this.saveMasterStatus();
+            this.attemptMasterRecovery();
         },
         
         // Convert text to speech and send to master
@@ -353,7 +662,9 @@ function ttsApp() {
                     language: this.language,
                     speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
                     priority: this.priority,
-                    timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString(),
+                    fromClientId: this.clientId,
+                    fromClientShortId: this.clientShortId
                 });
                 
                 this.showNotification('Mengirim permintaan TTS...', 'info');
@@ -381,7 +692,9 @@ function ttsApp() {
                 text: this.text,
                 language: this.language,
                 speed: this.speed,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                fromClientId: this.clientId,
+                fromClientShortId: this.clientShortId
             });
             
             this.showNotification('Mengirim broadcast ke semua komputer...', 'info');
@@ -732,6 +1045,25 @@ function ttsApp() {
         
         showHelp() {
             this.showHelpModal = true;
+        },
+        
+        // Master status methods
+        getMasterStatusText() {
+            if (this.isMaster) return 'Anda adalah Master Aktif';
+            if (this.wasMasterBeforeDisconnect && !this.isMaster) return 'Mencoba mengembalikan status Master...';
+            return 'Anda bukan Master';
+        },
+        
+        getMasterStatusColor() {
+            if (this.isMaster) return 'bg-green-100 text-green-800 border-green-300';
+            if (this.wasMasterBeforeDisconnect && !this.isMaster) return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+            return 'bg-gray-100 text-gray-800 border-gray-300';
+        },
+        
+        getMasterStatusIcon() {
+            if (this.isMaster) return 'fa-crown';
+            if (this.wasMasterBeforeDisconnect && !this.isMaster) return 'fa-sync-alt';
+            return 'fa-user';
         }
     };
 }

@@ -20,7 +20,8 @@ const io = socketIo(server, {
     credentials: true
   },
   pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT) || 5000,
-  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000
+  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000,
+  transports: ['websocket', 'polling']
 });
 
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,10 @@ const connectedClients = new Map();
 let masterClient = null;
 let masterRequestQueue = [];
 
+// Master recovery system
+const masterHistory = new Map();
+const masterRecoveryQueue = new Map();
+
 // Generate unique client ID with short version
 const generateClientId = () => {
   const id = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -58,10 +63,50 @@ const getShortId = (fullId) => {
   return fullId ? fullId.substring(0, 8) : 'unknown';
 };
 
+// Check if client is previous master
+const isPreviousMaster = (clientId) => {
+  return masterHistory.has(clientId);
+};
+
+// Add client to master history
+const addToMasterHistory = (clientId, shortId) => {
+  masterHistory.set(clientId, {
+    shortId: shortId,
+    firstBecameMaster: new Date(),
+    lastBecameMaster: new Date(),
+    timesMaster: (masterHistory.get(clientId)?.timesMaster || 0) + 1,
+    lastDisconnect: null,
+    recoveryAttempts: 0
+  });
+};
+
+// Update master history on disconnect
+const updateMasterHistoryOnDisconnect = (clientId) => {
+  const history = masterHistory.get(clientId);
+  if (history) {
+    history.lastDisconnect = new Date();
+  }
+};
+
+// Clean old master history
+const cleanOldMasterHistory = () => {
+  const now = new Date();
+  const oneHourAgo = new Date(now - 60 * 60 * 1000);
+  
+  for (const [clientId, history] of masterHistory.entries()) {
+    if (history.lastDisconnect && history.lastDisconnect < oneHourAgo) {
+      masterHistory.delete(clientId);
+    }
+  }
+};
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   const { id: clientId, shortId: shortClientId } = generateClientId();
   console.log(`[${new Date().toISOString()}] Client connected: ${shortClientId} (Full: ${clientId}, Socket: ${socket.id})`);
+  
+  // Check if this is a returning master
+  const isReturningMaster = isPreviousMaster(clientId);
   
   // Store client information
   connectedClients.set(socket.id, {
@@ -71,7 +116,8 @@ io.on('connection', (socket) => {
     isMaster: false,
     joinedAt: new Date(),
     lastActivity: new Date(),
-    clientInfo: {}
+    clientInfo: {},
+    isReturningMaster: isReturningMaster
   });
   
   // Send welcome message with client ID
@@ -82,7 +128,9 @@ io.on('connection', (socket) => {
     message: 'Terhubung ke TTS Multi-Client Server',
     totalClients: connectedClients.size,
     hasMaster: !!masterClient,
-    masterShortId: masterClient ? connectedClients.get(masterClient)?.shortId : null
+    masterShortId: masterClient ? connectedClients.get(masterClient)?.shortId : null,
+    supportsRecovery: true,
+    isReturningMaster: isReturningMaster
   });
   
   // Send current connection status
@@ -119,22 +167,38 @@ io.on('connection', (socket) => {
     if (client) {
       client.clientInfo = { ...client.clientInfo, ...info };
       client.lastActivity = new Date();
+      
+      // Check if this is a master recovery attempt
+      if (info.wasMaster && !masterClient) {
+        // Notify client that recovery is available
+        socket.emit('master-recovery-available', {
+          message: 'Recovery Master tersedia',
+          wasMaster: true,
+          recoveryAttempts: info.recoveryAttempts || 0
+        });
+      }
     }
   });
   
   // Handle request to become master
   socket.on('request-master-role', (data) => {
     const client = connectedClients.get(socket.id);
-    console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.shortId}`);
+    console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.shortId}, Recovery: ${data.isRecoveryAttempt || false}`);
+    
+    // Check jika ini recovery attempt
+    const isRecovery = data.isRecoveryAttempt || false;
     
     // Check if master already exists
-    if (masterClient) {
+    if (masterClient && masterClient !== socket.id) {
       const currentMaster = connectedClients.get(masterClient);
+      
+      // Jika ini recovery attempt, beri informasi lebih detail
       socket.emit('master-role-denied', {
         reason: 'Master controller sudah ada',
         currentMasterId: currentMaster?.id,
         currentMasterShortId: currentMaster?.shortId,
-        suggestion: 'Tunggu hingga master saat ini melepaskan peran'
+        suggestion: 'Tunggu hingga master saat ini melepaskan peran atau terputus',
+        isRecoveryAttempt: isRecovery
       });
       return;
     }
@@ -143,11 +207,28 @@ io.on('connection', (socket) => {
     masterClient = socket.id;
     connectedClients.get(socket.id).isMaster = true;
     
+    // Add to master history
+    addToMasterHistory(client.id, client.shortId);
+    
+    // Update recovery attempts if this is a recovery
+    if (isRecovery) {
+      const history = masterHistory.get(client.id);
+      if (history) {
+        history.recoveryAttempts = (history.recoveryAttempts || 0) + 1;
+        history.lastBecameMaster = new Date();
+      }
+      
+      console.log(`[${new Date().toISOString()}] Master recovery successful for: ${client.shortId}`);
+    }
+    
     socket.emit('master-role-granted', { 
       isMaster: true,
       clientId: client.id,
       shortClientId: client.shortId,
-      message: 'Anda sekarang adalah Master Controller'
+      message: isRecovery ? 
+        'Status Master berhasil dikembalikan!' : 
+        'Anda sekarang adalah Master Controller',
+      isRecovery: isRecovery
     });
     
     // Notify all clients with short IDs
@@ -155,10 +236,11 @@ io.on('connection', (socket) => {
       masterClientId: client.id,
       masterShortId: client.shortId,
       masterSocketId: socket.id,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      isRecovery: isRecovery
     });
     
-    console.log(`[${new Date().toISOString()}] Client ${client.shortId} is now master`);
+    console.log(`[${new Date().toISOString()}] Client ${client.shortId} is now master ${isRecovery ? '(recovered)' : ''}`);
     
     // Process any pending master requests
     if (masterRequestQueue.length > 0) {
@@ -171,7 +253,7 @@ io.on('connection', (socket) => {
   });
   
   // Handle release master role
-  socket.on('release-master-role', () => {
+  socket.on('release-master-role', (data) => {
     if (socket.id === masterClient) {
       const oldMaster = connectedClients.get(masterClient);
       masterClient = null;
@@ -181,15 +263,25 @@ io.on('connection', (socket) => {
         oldMasterId: oldMaster?.id,
         oldMasterShortId: oldMaster?.shortId,
         timestamp: new Date().toISOString(),
-        message: 'Master controller telah melepaskan peran'
+        message: 'Master controller telah melepaskan peran',
+        wasIntentional: data.isIntentional || false
       });
       
       socket.emit('master-role-released', {
         isMaster: false,
-        message: 'Anda telah melepaskan peran master'
+        message: 'Anda telah melepaskan peran master',
+        isIntentional: data.isIntentional || false
       });
       
-      console.log(`[${new Date().toISOString()}] Client ${oldMaster?.shortId} released master role`);
+      console.log(`[${new Date().toISOString()}] Client ${oldMaster?.shortId} released master role ${data.isIntentional ? '(intentional)' : ''}`);
+      
+      // If intentional release, don't keep in recovery queue
+      if (data.isIntentional) {
+        masterHistory.delete(oldMaster?.id);
+      } else {
+        // If not intentional, keep for recovery
+        updateMasterHistoryOnDisconnect(oldMaster?.id);
+      }
     }
   });
   
@@ -423,11 +515,20 @@ io.on('connection', (socket) => {
     const client = connectedClients.get(socket.id);
     if (client) {
       client.lastActivity = new Date();
+      
+      // Update master status if this is a master
+      if (client.isMaster) {
+        const history = masterHistory.get(client.id);
+        if (history) {
+          history.lastActivity = new Date();
+        }
+      }
     }
     socket.emit('pong', {
       serverTime: new Date().toISOString(),
       clientId: client?.id,
-      clientShortId: client?.shortId
+      clientShortId: client?.shortId,
+      isMaster: client?.isMaster || false
     });
   });
   
@@ -441,11 +542,24 @@ io.on('connection', (socket) => {
       const disconnectedMaster = client;
       masterClient = null;
       
+      // Update master history
+      if (disconnectedMaster) {
+        updateMasterHistoryOnDisconnect(disconnectedMaster.id);
+        
+        const history = masterHistory.get(disconnectedMaster.id);
+        if (history) {
+          history.lastDisconnect = new Date();
+          history.disconnectReason = reason;
+        }
+      }
+      
       io.emit('master-disconnected', {
         disconnectedMasterId: disconnectedMaster?.id,
         disconnectedMasterShortId: disconnectedMaster?.shortId,
         timestamp: new Date().toISOString(),
-        message: 'Master Controller terputus. Silakan klien lain mengambil alih peran master.'
+        message: 'Master Controller terputus. Sistem akan mencoba recovery otomatis.',
+        disconnectReason: reason,
+        canRecover: true // Tandai bahwa recovery dimungkinkan
       });
       
       // Clear master queue
@@ -457,6 +571,22 @@ io.on('connection', (socket) => {
           });
         });
         masterRequestQueue = [];
+      }
+      
+      // Check if any previous masters are connected
+      const previousMasters = Array.from(connectedClients.values()).filter(client => 
+        isPreviousMaster(client.id) && client.socketId !== socket.id
+      );
+      
+      if (previousMasters.length > 0) {
+        // Notify previous masters that recovery is available
+        previousMasters.forEach(prevMaster => {
+          io.to(prevMaster.socketId).emit('master-recovery-available', {
+            message: 'Master terputus. Anda dapat mengambil alih sebagai Master.',
+            previousMaster: true,
+            disconnectedMasterShortId: disconnectedMaster?.shortId
+          });
+        });
       }
     }
     
@@ -493,11 +623,19 @@ setInterval(() => {
       console.log(`[${new Date().toISOString()}] Removing inactive client: ${client.shortId}`);
       
       if (socketId === masterClient) {
+        const disconnectedMaster = client;
         masterClient = null;
+        
+        // Update master history
+        if (disconnectedMaster) {
+          updateMasterHistoryOnDisconnect(disconnectedMaster.id);
+        }
+        
         io.emit('master-inactive', {
-          inactiveClientId: client.id,
-          inactiveClientShortId: client.shortId,
-          timestamp: now.toISOString()
+          inactiveClientId: disconnectedMaster?.id,
+          inactiveClientShortId: disconnectedMaster?.shortId,
+          timestamp: now.toISOString(),
+          reason: 'inactivity'
         });
       }
       
@@ -507,17 +645,23 @@ setInterval(() => {
   });
 }, 60 * 1000); // Check every minute
 
+// Clean old master history periodically
+setInterval(() => {
+  cleanOldMasterHistory();
+}, 30 * 60 * 1000); // Every 30 minutes
+
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    service: 'Multi-Client TTS Server v2.0',
+    service: 'Multi-Client TTS Server v2.0 with Master Recovery',
     serverUptime: process.uptime(),
     connectedClients: connectedClients.size,
     masterClient: masterClient ? connectedClients.get(masterClient)?.shortId : null,
     pendingRequests: masterRequestQueue.length,
+    masterHistoryCount: masterHistory.size,
     memoryUsage: process.memoryUsage()
   });
 });
@@ -529,7 +673,8 @@ app.get('/api/clients', (req, res) => {
     isMaster: client.isMaster,
     joinedAt: client.joinedAt,
     lastActivity: client.lastActivity,
-    clientInfo: client.clientInfo
+    clientInfo: client.clientInfo,
+    isReturningMaster: client.isReturningMaster
   }));
   
   res.json({
@@ -539,12 +684,20 @@ app.get('/api/clients', (req, res) => {
     masterShortId: masterClient ? connectedClients.get(masterClient)?.shortId : null,
     masterSocketId: masterClient,
     pendingRequests: masterRequestQueue.length,
+    masterHistory: Array.from(masterHistory.entries()).map(([id, data]) => ({
+      id: id,
+      shortId: data.shortId,
+      firstBecameMaster: data.firstBecameMaster,
+      lastBecameMaster: data.lastBecameMaster,
+      timesMaster: data.timesMaster,
+      recoveryAttempts: data.recoveryAttempts || 0
+    })),
     clients: clients
   });
 });
 
 app.post('/api/set-master', (req, res) => {
-  const { clientId } = req.body;
+  const { clientId, forceRecovery = false } = req.body;
   
   if (!clientId) {
     return res.status(400).json({
@@ -569,7 +722,7 @@ app.post('/api/set-master', (req, res) => {
   }
   
   // Check if master already exists
-  if (masterClient && masterClient !== targetSocketId) {
+  if (masterClient && masterClient !== targetSocketId && !forceRecovery) {
     const currentMaster = connectedClients.get(masterClient);
     return res.status(400).json({
       success: false,
@@ -589,6 +742,9 @@ app.post('/api/set-master', (req, res) => {
   
   const newMaster = connectedClients.get(targetSocketId);
   
+  // Add to master history
+  addToMasterHistory(newMaster.id, newMaster.shortId);
+  
   // Notify all clients
   io.emit('master-changed', {
     masterClientId: newMaster.id,
@@ -603,7 +759,8 @@ app.post('/api/set-master', (req, res) => {
   res.json({
     success: true,
     message: `Client ${newMaster.shortId} sekarang menjadi Master Controller`,
-    masterClient: newMaster.shortId
+    masterClient: newMaster.shortId,
+    wasRecovery: !!oldMaster
   });
 });
 
@@ -743,6 +900,7 @@ app.get('/api/stats', (req, res) => {
     connectedClients: connectedClients.size,
     masterClient: masterClient ? connectedClients.get(masterClient)?.shortId : null,
     pendingRequests: masterRequestQueue.length,
+    masterHistoryCount: masterHistory.size,
     serverUptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
     activeSince: new Date(Date.now() - process.uptime() * 1000).toISOString()
@@ -751,6 +909,109 @@ app.get('/api/stats', (req, res) => {
   res.json({
     success: true,
     stats: stats
+  });
+});
+
+app.get('/api/master-status', (req, res) => {
+  const currentMaster = masterClient ? connectedClients.get(masterClient) : null;
+  const masterHistoryArray = Array.from(masterHistory.entries()).map(([id, data]) => ({
+    clientId: id,
+    shortId: data.shortId,
+    firstBecameMaster: data.firstBecameMaster,
+    lastBecameMaster: data.lastBecameMaster,
+    timesMaster: data.timesMaster,
+    recoveryAttempts: data.recoveryAttempts || 0,
+    lastDisconnect: data.lastDisconnect
+  }));
+  
+  const previousMastersConnected = Array.from(connectedClients.values())
+    .filter(client => isPreviousMaster(client.id) && client.socketId !== masterClient)
+    .map(client => ({
+      id: client.id,
+      shortId: client.shortId,
+      connectedSince: client.joinedAt
+    }));
+  
+  res.json({
+    success: true,
+    currentMaster: currentMaster ? {
+      id: currentMaster.id,
+      shortId: currentMaster.shortId,
+      socketId: currentMaster.socketId,
+      isConnected: true,
+      connectedSince: currentMaster.joinedAt
+    } : null,
+    masterHistory: masterHistoryArray,
+    previousMastersConnected: previousMastersConnected,
+    canRecover: !currentMaster && previousMastersConnected.length > 0,
+    pendingRecovery: masterRequestQueue.length
+  });
+});
+
+app.post('/api/force-master-recovery', (req, res) => {
+  const { clientId } = req.body;
+  
+  if (!clientId) {
+    return res.status(400).json({
+      success: false,
+      error: 'clientId diperlukan'
+    });
+  }
+  
+  // Find client by ID
+  let targetSocketId = null;
+  connectedClients.forEach((client, socketId) => {
+    if (client.id === clientId || client.shortId === clientId) {
+      targetSocketId = socketId;
+    }
+  });
+  
+  if (!targetSocketId) {
+    return res.status(404).json({
+      success: false,
+      error: 'Client tidak ditemukan'
+    });
+  }
+  
+  // Force recovery even if there's already a master
+  const oldMaster = masterClient;
+  masterClient = targetSocketId;
+  
+  // Update client status
+  connectedClients.forEach((client, socketId) => {
+    client.isMaster = (socketId === targetSocketId);
+  });
+  
+  const newMaster = connectedClients.get(targetSocketId);
+  
+  // Add to master history
+  addToMasterHistory(newMaster.id, newMaster.shortId);
+  
+  // Notify all clients about forced recovery
+  io.emit('master-changed', {
+    masterClientId: newMaster.id,
+    masterShortId: newMaster.shortId,
+    masterSocketId: targetSocketId,
+    oldMasterId: oldMaster ? connectedClients.get(oldMaster)?.id : null,
+    oldMasterShortId: oldMaster ? connectedClients.get(oldMaster)?.shortId : null,
+    timestamp: new Date().toISOString(),
+    changedBy: 'api-force-recovery',
+    wasForced: true
+  });
+  
+  // Notify the new master
+  io.to(targetSocketId).emit('master-recovery-success', {
+    message: 'Status Master berhasil dipulihkan secara paksa',
+    wasForced: true,
+    previousMaster: oldMaster ? connectedClients.get(oldMaster)?.shortId : null
+  });
+  
+  res.json({
+    success: true,
+    message: `Client ${newMaster.shortId} berhasil dipaksa menjadi Master Controller`,
+    masterClient: newMaster.shortId,
+    wasForced: true,
+    previousMaster: oldMaster ? connectedClients.get(oldMaster)?.shortId : null
   });
 });
 
@@ -776,7 +1037,7 @@ app.use((req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   const serverUrl = `http://${process.env.SERVER_IP || 'localhost'}:${PORT}`;
   console.log(`\n🚀 ========================================`);
-  console.log(`   Multi-Client TTS Server v2.0`);
+  console.log(`   Multi-Client TTS Server v2.0 with Master Recovery`);
   console.log(`   Berjalan di: ${serverUrl}`);
   console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   Socket.IO aktif`);
@@ -787,16 +1048,17 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   GET  ${serverUrl}/api/health      - Cek status server & client`);
   console.log(`   GET  ${serverUrl}/api/clients     - Daftar client terhubung`);
   console.log(`   GET  ${serverUrl}/api/stats       - Statistik server`);
+  console.log(`   GET  ${serverUrl}/api/master-status - Status recovery master`);
   console.log(`   POST ${serverUrl}/api/set-master  - Atur client sebagai master`);
+  console.log(`   POST ${serverUrl}/api/force-master-recovery - Paksa recovery master`);
   console.log(`   POST ${serverUrl}/api/tts         - Konversi teks ke suara`);
   console.log(`   GET  ${serverUrl}/api/languages   - Daftar bahasa yang didukung`);
   console.log(`   POST ${serverUrl}/api/clear-queue - Hapus antrian TTS`);
   console.log(`\n🌐 Frontend tersedia di: ${serverUrl}`);
-  console.log(`\n🔧 Cara penggunaan:`);
-  console.log(`   1. Buka ${serverUrl} di browser komputer master`);
-  console.log(`   2. Klik "Jadikan Master"`);
-  console.log(`   3. Buka ${serverUrl} di komputer lain`);
-  console.log(`   4. Masukkan teks dan kirim dari komputer lain`);
-  console.log(`   5. Audio akan diputar HANYA di komputer master`);
+  console.log(`\n🔧 Fitur Master Recovery:`);
+  console.log(`   - Master yang terputus otomatis mencoba kembali`);
+  console.log(`   - Penyimpanan status di localStorage`);
+  console.log(`   - Priority recovery untuk master sebelumnya`);
+  console.log(`   - Auto-reconnect lebih agresif untuk master`);
   console.log(`\n========================================\n`);
 });
