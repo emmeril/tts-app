@@ -393,7 +393,65 @@
                         </div>
                     </div>
 
-                    <!-- Settings Card -->
+                    <!-- History Section (DIPINDAHKAN KE SINI) -->
+                    <div x-show="history.length > 0" class="bg-white rounded-2xl shadow-soft border border-gray-200">
+                        <div class="px-6 py-4 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-display font-bold text-gray-900">Riwayat Konversi</h3>
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-sm text-gray-500" x-text="history.length + ' total'"></span>
+                                    <button @click="clearHistory()"
+                                            class="px-3 py-1.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm flex items-center space-x-2">
+                                        <i class="fas fa-trash-alt"></i>
+                                        <span>Hapus Semua</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="p-4">
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[400px] overflow-y-auto pr-2">
+                                <template x-for="(item, index) in history.slice().reverse()" :key="item.id">
+                                    <div class="border border-gray-200 rounded-xl p-4 hover:border-gray-300 transition-colors"
+                                         :class="{'bg-green-50 border-green-200': item.success, 'bg-red-50 border-red-200': !item.success}">
+                                        <div class="space-y-3">
+                                            <!-- Text Preview -->
+                                            <div>
+                                                <p class="text-gray-800 font-medium" x-text="truncateText(item.text, 60)"></p>
+                                            </div>
+                                            
+                                            <!-- Metadata -->
+                                            <div class="flex items-center justify-between">
+                                                <div class="flex items-center space-x-3">
+                                                    <span class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700"
+                                                          x-text="getLanguageCode(item.language)"></span>
+                                                    <span :class="item.success ? 'text-green-600' : 'text-red-600'">
+                                                        <i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i>
+                                                    </span>
+                                                </div>
+                                                <span class="text-xs text-gray-500" x-text="formatTime(item.timestamp)"></span>
+                                            </div>
+                                            
+                                            <!-- Actions -->
+                                            <div class="flex space-x-2 pt-2">
+                                                <button @click="loadHistoryItem(item)"
+                                                        class="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm flex items-center justify-center space-x-2">
+                                                    <i class="fas fa-redo"></i>
+                                                    <span>Gunakan Lagi</span>
+                                                </button>
+                                                <button @click="removeHistoryItem(item.id)"
+                                                        class="px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Settings Card (BERPINDAH POSISI) -->
                     <div class="bg-white rounded-2xl shadow-soft border border-gray-200">
                         <div class="px-6 py-4 border-b border-gray-200">
                             <h3 class="text-lg font-display font-bold text-gray-900">Pengaturan Konversi</h3>
@@ -485,7 +543,7 @@
 
                 <!-- Right Column: Clients & Actions -->
                 <div class="space-y-6">
-  <!-- Action Panel -->
+                    <!-- Action Panel -->
                     <div class="bg-gradient-to-br from-primary-50 to-blue-50 rounded-2xl border border-primary-100 p-5">
                         <h3 class="text-lg font-display font-bold text-gray-900 mb-4">Aksi Sistem</h3>
                         
@@ -532,7 +590,6 @@
                             </div>
                         </div>
                     </div>
-
 
                     <!-- Connected Clients -->
                     <div class="bg-white rounded-2xl shadow-soft border border-gray-200">
@@ -592,8 +649,6 @@
                         </div>
                     </div>
 
-                  
-
                     <!-- Quick Actions -->
                     <div class="bg-white rounded-2xl shadow-soft border border-gray-200 p-4">
                         <h4 class="font-medium text-gray-900 mb-3">Aksi Cepat</h4>
@@ -618,66 +673,6 @@
                                 <i class="fas fa-trash"></i>
                                 <span class="text-sm">Hapus Riwayat</span>
                             </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- History Section -->
-            <div x-show="history.length > 0" class="mt-6">
-                <div class="bg-white rounded-2xl shadow-soft border border-gray-200">
-                    <div class="px-6 py-4 border-b border-gray-200">
-                        <div class="flex items-center justify-between">
-                            <h3 class="text-lg font-display font-bold text-gray-900">Riwayat Konversi</h3>
-                            <div class="flex items-center space-x-2">
-                                <span class="text-sm text-gray-500" x-text="history.length + ' total'"></span>
-                                <button @click="clearHistory()"
-                                        class="px-3 py-1.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm flex items-center space-x-2">
-                                    <i class="fas fa-trash-alt"></i>
-                                    <span>Hapus Semua</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="p-4">
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[400px] overflow-y-auto pr-2">
-                            <template x-for="(item, index) in history.slice().reverse()" :key="item.id">
-                                <div class="border border-gray-200 rounded-xl p-4 hover:border-gray-300 transition-colors"
-                                     :class="{'bg-green-50 border-green-200': item.success, 'bg-red-50 border-red-200': !item.success}">
-                                    <div class="space-y-3">
-                                        <!-- Text Preview -->
-                                        <div>
-                                            <p class="text-gray-800 font-medium" x-text="truncateText(item.text, 60)"></p>
-                                        </div>
-                                        
-                                        <!-- Metadata -->
-                                        <div class="flex items-center justify-between">
-                                            <div class="flex items-center space-x-3">
-                                                <span class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700"
-                                                      x-text="getLanguageCode(item.language)"></span>
-                                                <span :class="item.success ? 'text-green-600' : 'text-red-600'">
-                                                    <i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i>
-                                                </span>
-                                            </div>
-                                            <span class="text-xs text-gray-500" x-text="formatTime(item.timestamp)"></span>
-                                        </div>
-                                        
-                                        <!-- Actions -->
-                                        <div class="flex space-x-2 pt-2">
-                                            <button @click="loadHistoryItem(item)"
-                                                    class="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm flex items-center justify-center space-x-2">
-                                                <i class="fas fa-redo"></i>
-                                                <span>Gunakan Lagi</span>
-                                            </button>
-                                            <button @click="removeHistoryItem(item.id)"
-                                                    class="px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
-                                                <i class="fas fa-times"></i>
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
                         </div>
                     </div>
                 </div>
