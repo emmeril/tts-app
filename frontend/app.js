@@ -382,18 +382,22 @@ function ttsApp() {
                 }
             });
             
-            this.socket.on('tts-audio', (data) => {
-                console.log('Received TTS audio:', data);
-                
-                // Store the audio data
-                this.currentAudio = data;
-                
-                // Hanya tampilkan notifikasi, jangan auto-play
-                if (this.isMaster) {
-                    const fromClientShortId = data.fromClientShortId || this.formatClientId(data.fromClientId);
-                    this.showNotification(`Menerima audio dari ${fromClientShortId}. Klik "Putar Audio" untuk memutar.`, 'info');
-                }
-            });
+           this.socket.on('tts-audio', (data) => {
+    console.log('Received TTS audio:', data);
+    
+    // Store the audio data
+    this.currentAudio = data;
+    
+    if (this.isMaster) {
+        const fromClientShortId = data.fromClientShortId || this.formatClientId(data.fromClientId);
+        this.showNotification(`Menerima audio dari ${fromClientShortId}. Memutar audio...`, 'success');
+        
+        // AUTO-PLAY AUDIO DI MASTER
+        setTimeout(() => {
+            this.playAudioLocal();
+        }, 500); // Delay kecil untuk memastikan UI siap
+    }
+});
             
             this.socket.on('play-audio-master', (data) => {
                 // Hanya master yang menerima ini
