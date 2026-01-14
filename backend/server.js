@@ -11,13 +11,9 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [
-      'http://localhost:3000',
-      'http://localhost:5500',
-      'http://127.0.0.1:5500'
-    ],
+    origin: "*", // Izinkan semua origin
     methods: ['GET', 'POST'],
-    credentials: true
+    credentials: false
   },
   pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT) || 5000,
   pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000,
@@ -26,14 +22,10 @@ const io = socketIo(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Middleware - Hapus CORS atau izinkan semua
 app.use(cors({
-  origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [
-    'http://localhost:3000',
-    'http://localhost:5500',
-    'http://127.0.0.1:5500'
-  ],
-  credentials: true
+  origin: "*", // Izinkan semua origin
+  credentials: false
 }));
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
 app.use(express.json({ limit: '10mb' }));
@@ -650,7 +642,7 @@ setInterval(() => {
   cleanOldMasterHistory();
 }, 30 * 60 * 1000); // Every 30 minutes
 
-// API Routes
+// API Routes - Semua menjadi public
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
