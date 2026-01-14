@@ -57,6 +57,52 @@
         .modal-backdrop {
             background-color: rgba(0, 0, 0, 0.5);
         }
+        
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 30px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+        
+        input:checked + .toggle-slider:before {
+            transform: translateX(30px);
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 min-h-screen">
@@ -101,9 +147,15 @@
                         <i class="fas fa-crown"></i>
                         <span>Kontrol Master</span>
                     </h3>
-                    <div class="client-count flex items-center space-x-2 text-white mt-2 md:mt-0">
-                        <i class="fas fa-users"></i>
-                        <span><span x-text="connectedClients.length"></span> komputer terhubung</span>
+                    <div class="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-4 text-white mt-2 md:mt-0">
+                        <div class="client-count flex items-center space-x-2">
+                            <i class="fas fa-users"></i>
+                            <span><span x-text="connectedClients.length"></span> komputer terhubung</span>
+                        </div>
+                        <div class="auto-play-status flex items-center space-x-2" x-show="isMaster">
+                            <i class="fas" :class="autoPlayEnabled ? 'fa-play-circle' : 'fa-pause-circle'"></i>
+                            <span>Auto-play: <span x-text="getAutoPlayStatusText()"></span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -157,6 +209,15 @@
                                 <h4 class="text-xl font-bold text-yellow-900">Anda adalah Master Controller</h4>
                                 <p class="text-yellow-800 mt-2">ID Master: <strong x-text="clientShortId"></strong></p>
                                 <p class="text-yellow-800 mt-1"><strong>Audio hanya akan diputar di komputer ini.</strong> Komputer lain tidak akan mendengar audio.</p>
+                                <div class="mt-3 flex items-center space-x-2">
+                                    <span class="text-yellow-800">Auto-play: </span>
+                                    <button @click="toggleAutoPlay()" 
+                                            class="flex items-center space-x-2 px-3 py-1 rounded-full" 
+                                            :class="autoPlayEnabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'">
+                                        <i class="fas" :class="autoPlayEnabled ? 'fa-check-circle' : 'fa-times-circle'"></i>
+                                        <span x-text="autoPlayEnabled ? 'Aktif' : 'Nonaktif'"></span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -462,6 +523,25 @@
                     
                     <div class="p-6">
                         <div class="space-y-6">
+                            <!-- Auto-play toggle for master -->
+                            <div x-show="isMaster">
+                                <div class="flex items-center justify-between mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 flex items-center space-x-2">
+                                        <i class="fas fa-play-circle text-gray-500"></i>
+                                        <span>Auto-play Audio</span>
+                                    </label>
+                                    <div class="toggle-switch">
+                                        <input type="checkbox" x-model="autoPlayEnabled" @change="toggleAutoPlay()">
+                                        <span class="toggle-slider"></span>
+                                    </div>
+                                </div>
+                                <p class="text-sm text-gray-500 mb-4" x-show="isMaster">
+                                    <span x-show="autoPlayEnabled">Audio akan otomatis diputar saat diterima dari client</span>
+                                    <span x-show="!autoPlayEnabled">Audio harus diputar manual dengan tombol "Putar Audio"</span>
+                                </p>
+                                <hr class="my-4">
+                            </div>
+                            
                             <div>
                                 <label for="language" class="block text-sm font-medium text-gray-700 mb-2 flex items-center space-x-2">
                                     <i class="fas fa-language text-gray-500"></i>
@@ -563,6 +643,23 @@
                                     <div>
                                         <p class="text-sm text-gray-600">Riwayat</p>
                                         <p class="font-bold text-gray-800" x-text="history.length + ' item'"></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Auto-play status for master -->
+                        <div class="mt-4" x-show="isMaster">
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <div class="flex items-center space-x-3">
+                                    <div class="bg-blue-100 text-blue-600 p-2 rounded-full">
+                                        <i class="fas fa-play-circle"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm text-gray-600">Auto-play</p>
+                                        <p class="font-bold text-gray-800" x-text="autoPlayEnabled ? 'Aktif' : 'Nonaktif'"></p>
+                                        <p class="text-xs text-gray-500 mt-1" x-show="autoPlayEnabled">Audio otomatis diputar saat diterima</p>
+                                        <p class="text-xs text-gray-500 mt-1" x-show="!autoPlayEnabled">Audio harus diputar manual</p>
                                     </div>
                                 </div>
                             </div>
@@ -797,6 +894,12 @@
                             <div>
                                 <h5 class="font-bold text-gray-800">Mengirim Teks dari Client</h5>
                                 <p class="text-gray-700 mt-1">Di komputer lain (client biasa), masukkan teks dan klik "Kirim ke Master". Audio akan diputar <strong>HANYA di komputer Master</strong>.</p>
+                                <div class="bg-green-50 p-3 rounded-lg mt-2">
+                                    <div class="flex items-start space-x-2">
+                                        <i class="fas fa-info-circle text-green-600 mt-0.5"></i>
+                                        <p class="text-green-800 text-sm">Master dapat mengaktifkan/menonaktifkan auto-play di pengaturan.</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
@@ -804,15 +907,15 @@
                             <div class="bg-yellow-500 text-white rounded-full h-8 w-8 flex items-center justify-center font-bold flex-shrink-0">3</div>
                             <div>
                                 <h5 class="font-bold text-gray-800">Memutar Audio (Master Only)</h5>
-                                <p class="text-gray-700 mt-1">Di komputer Master, klik "Putar Audio" untuk memutar audio yang diterima. Audio hanya keluar dari speaker komputer Master.</p>
+                                <p class="text-gray-700 mt-1">Di komputer Master, audio akan otomatis diputar jika auto-play aktif. Jika tidak, klik "Putar Audio" untuk memutar manual.</p>
                             </div>
                         </div>
                         
                         <div class="flex space-x-4">
                             <div class="bg-purple-500 text-white rounded-full h-8 w-8 flex items-center justify-center font-bold flex-shrink-0">4</div>
                             <div>
-                                <h5 class="font-bold text-gray-800">Broadcast (Opsional)</h5>
-                                <p class="text-gray-700 mt-1">Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua Komputer".</p>
+                                <h5 class="font-bold text-gray-800">Pengaturan Auto-play</h5>
+                                <p class="text-gray-700 mt-1">Master dapat mengatur auto-play di panel Master atau bagian Pengaturan. Aktifkan untuk kenyamanan, nonaktifkan untuk kontrol manual.</p>
                             </div>
                         </div>
                     </div>
@@ -823,6 +926,10 @@
                             <li class="flex items-start space-x-2">
                                 <i class="fas fa-exclamation-circle text-red-500 mt-0.5"></i>
                                 <span><strong>Tidak bisa jadi Master:</strong> Sudah ada Master aktif. Tunggu Master melepaskan peran atau minta Master saat ini untuk melepaskan.</span>
+                            </li>
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-exclamation-circle text-red-500 mt-0.5"></i>
+                                <span><strong>Audio tidak otomatis diputar:</strong> Periksa pengaturan auto-play di panel Master. Browser mungkin memblokir auto-play.</span>
                             </li>
                             <li class="flex items-start space-x-2">
                                 <i class="fas fa-exclamation-circle text-red-500 mt-0.5"></i>
@@ -845,6 +952,7 @@
                             <div>
                                 <strong class="text-blue-800">Tip:</strong>
                                 <p class="text-blue-800 mt-1">Gunakan ID pendek untuk mengidentifikasi komputer. Master: <code class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-mono">MASTER</code>, Client: <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono">CLIENT</code></p>
+                                <p class="text-blue-800 mt-2">Aktifkan auto-play untuk pengalaman tanpa gangguan. Nonaktifkan jika ingin kontrol penuh atas pemutaran audio.</p>
                             </div>
                         </div>
                     </div>

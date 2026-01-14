@@ -40,11 +40,17 @@ function ttsApp() {
         isAttemptingMasterRecovery: false,
         lastMasterStatus: null,
         
+        // Auto-play setting
+        autoPlayEnabled: true,
+        
         // Initialize
         init() {
             this.updateCharCount();
             this.loadLanguages();
             this.loadHistory();
+            
+            // Load settings
+            this.loadSettings();
             
             // Load master status dari localStorage
             this.loadMasterStatus();
@@ -84,6 +90,38 @@ function ttsApp() {
                     }
                 }
             }, 10000);
+        },
+        
+        // Load settings
+        loadSettings() {
+            try {
+                const savedAutoPlay = localStorage.getItem('ttsAutoPlay');
+                if (savedAutoPlay !== null) {
+                    this.autoPlayEnabled = savedAutoPlay === 'true';
+                }
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        },
+        
+        // Save settings
+        saveSettings() {
+            try {
+                localStorage.setItem('ttsAutoPlay', this.autoPlayEnabled.toString());
+            } catch (error) {
+                console.error('Failed to save settings:', error);
+            }
+        },
+        
+        // Toggle auto-play
+        toggleAutoPlay() {
+            this.autoPlayEnabled = !this.autoPlayEnabled;
+            this.saveSettings();
+            
+            const message = this.autoPlayEnabled ? 
+                'Auto-play diaktifkan. Audio akan otomatis diputar di Master.' : 
+                'Auto-play dinonaktifkan. Audio harus diputar manual.';
+            this.showNotification(message, 'info');
         },
         
         // Load master status dari localStorage
@@ -165,7 +203,8 @@ function ttsApp() {
                     screen: `${window.screen.width}x${window.screen.height}`,
                     url: window.location.href,
                     wasMaster: this.wasMasterBeforeDisconnect,
-                    recoveryAttempts: this.masterAutoRecoveryAttempts
+                    recoveryAttempts: this.masterAutoRecoveryAttempts,
+                    autoPlayEnabled: this.autoPlayEnabled
                 });
                 
                 // Jika sebelumnya adalah master dan terputus, coba recovery
@@ -382,22 +421,31 @@ function ttsApp() {
                 }
             });
             
-           this.socket.on('tts-audio', (data) => {
-    console.log('Received TTS audio:', data);
-    
-    // Store the audio data
-    this.currentAudio = data;
-    
-    if (this.isMaster) {
-        const fromClientShortId = data.fromClientShortId || this.formatClientId(data.fromClientId);
-        this.showNotification(`Menerima audio dari ${fromClientShortId}. Memutar audio...`, 'success');
-        
-        // AUTO-PLAY AUDIO DI MASTER
-        setTimeout(() => {
-            this.playAudioLocal();
-        }, 500); // Delay kecil untuk memastikan UI siap
-    }
-});
+            this.socket.on('tts-audio', (data) => {
+                console.log('Received TTS audio:', data);
+                
+                // Store the audio data
+                this.currentAudio = data;
+                
+                // Auto-play audio untuk master jika diaktifkan
+                if (this.isMaster) {
+                    const fromClientShortId = data.fromClientShortId || this.formatClientId(data.fromClientId);
+                    
+                    if (this.autoPlayEnabled) {
+                        this.showNotification(`Menerima audio dari ${fromClientShortId}. Memutar audio...`, 'success');
+                        
+                        // Hentikan audio yang sedang diputar jika ada
+                        this.stopAudio();
+                        
+                        // Tunggu sebentar sebelum memutar
+                        setTimeout(() => {
+                            this.playAudioLocal();
+                        }, 300);
+                    } else {
+                        this.showNotification(`Menerima audio dari ${fromClientShortId}. Klik "Putar Audio" untuk memutar.`, 'info');
+                    }
+                }
+            });
             
             this.socket.on('play-audio-master', (data) => {
                 // Hanya master yang menerima ini
@@ -726,19 +774,34 @@ function ttsApp() {
                 return;
             }
             
+            // Hentikan audio yang sedang diputar jika ada
+            this.stopAudio();
+            
             const audioElement = this.isMaster ? 
                 document.getElementById('masterAudioPlayer') : 
                 document.getElementById('hiddenAudio');
             
             if (audioElement) {
                 audioElement.src = this.currentAudio.audioUrl;
-                audioElement.play().then(() => {
-                    this.isPlaying = true;
-                    this.showNotification('Memutar audio...', 'success');
-                }).catch(error => {
-                    console.error('Play error:', error);
-                    this.showNotification('Gagal memutar audio: ' + error.message, 'error');
-                });
+                
+                // Coba play audio
+                const playPromise = audioElement.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        this.isPlaying = true;
+                        this.showNotification('Memutar audio...', 'success');
+                    }).catch(error => {
+                        console.error('Play error:', error);
+                        
+                        // Jika auto-play diblokir, beri petunjuk
+                        if (error.name === 'NotAllowedError') {
+                            this.showNotification('Browser memblokir auto-play. Klik tombol Putar Audio manual.', 'warning');
+                        } else {
+                            this.showNotification('Gagal memutar audio: ' + error.message, 'error');
+                        }
+                    });
+                }
             }
         },
         
@@ -752,6 +815,7 @@ function ttsApp() {
                 audioElement.pause();
                 this.isPlaying = false;
                 this.socket.emit('audio-status', 'paused');
+                this.showNotification('Audio dijeda', 'info');
             }
         },
         
@@ -764,6 +828,7 @@ function ttsApp() {
             if (audioElement) {
                 audioElement.pause();
                 audioElement.currentTime = 0;
+                audioElement.src = '';
                 this.isPlaying = false;
                 this.socket.emit('audio-status', 'stopped');
                 
@@ -827,6 +892,8 @@ function ttsApp() {
         clearAudio() {
             this.currentAudio = null;
             this.isPlaying = false;
+            this.stopAudio();
+            this.showNotification('Audio dibersihkan', 'info');
         },
         
         // Show notification
@@ -1068,6 +1135,19 @@ function ttsApp() {
             if (this.isMaster) return 'fa-crown';
             if (this.wasMasterBeforeDisconnect && !this.isMaster) return 'fa-sync-alt';
             return 'fa-user';
+        },
+        
+        // Auto-play status
+        getAutoPlayStatusText() {
+            return this.autoPlayEnabled ? 'Aktif' : 'Nonaktif';
+        },
+        
+        getAutoPlayStatusColor() {
+            return this.autoPlayEnabled ? 'bg-green-100 text-green-800 border-green-300' : 'bg-gray-100 text-gray-800 border-gray-300';
+        },
+        
+        getAutoPlayStatusIcon() {
+            return this.autoPlayEnabled ? 'fa-check-circle' : 'fa-times-circle';
         }
     };
 }
