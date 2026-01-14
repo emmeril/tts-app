@@ -35,6 +35,17 @@
                     <i class="fas fa-id-card"></i>
                     <span>ID: <span x-text="clientIdShort"></span></span>
                 </div>
+                <div class="master-preference-badge" 
+                     :class="masterStatusColor" 
+                     @click="toggleMasterPreference()"
+                     style="cursor: pointer;">
+                    <i class="fas" :class="{
+                        'fa-crown': isMaster,
+                        'fa-hourglass-half': wantsToBeMaster && !isMaster,
+                        'fa-desktop': !wantsToBeMaster && !isMaster
+                    }"></i>
+                    <span x-text="masterStatusBadge"></span>
+                </div>
             </div>
         </header>
 
@@ -52,15 +63,26 @@
                 <div x-show="!isMaster" class="master-request">
                     <div class="master-info">
                         <i class="fas fa-info-circle"></i>
-                        <p>Status: <strong>Client Biasa</strong> - Anda dapat mengirim teks, tetapi hanya Master yang memutar audio.</p>
+                        <p>Status: <strong :class="masterStatusColor" x-text="masterStatusBadge"></strong> - 
+                           <span x-show="wantsToBeMaster">Anda akan otomatis menjadi Master saat tersedia</span>
+                           <span x-show="!wantsToBeMaster">Audio akan diputar di komputer Master</span>
+                        </p>
                     </div>
-                    <button @click="requestMasterRole()" 
-                            :disabled="isRequestingMaster || isMaster" 
-                            class="btn btn-success btn-master">
-                        <i class="fas fa-crown"></i>
-                        <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
-                    </button>
+                    <div class="master-request-actions">
+                        <button @click="requestMasterRole()" 
+                                :disabled="isRequestingMaster || isMaster" 
+                                class="btn btn-success btn-master">
+                            <i class="fas fa-crown"></i>
+                            <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
+                        </button>
+                        <button @click="toggleMasterPreference()" class="btn btn-outline">
+                            <i class="fas fa-cog"></i> Pengaturan
+                        </button>
+                    </div>
                     <p class="hint">* Master akan menerima dan memutar audio dari semua komputer</p>
+                    <p class="hint" x-show="wantsToBeMaster">
+                        <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis menjadi Master saat tersedia
+                    </p>
                 </div>
                 
                 <div x-show="isMaster" class="master-active">
@@ -69,6 +91,9 @@
                         <div>
                             <h4>Anda adalah Master Controller</h4>
                             <p>Audio akan diputar di komputer ini. Semua komputer lain mengirim teks ke Anda.</p>
+                            <p class="auto-reconnect-info" x-show="wantsToBeMaster">
+                                <i class="fas fa-sync-alt"></i> Auto-reconnect aktif: Anda akan otomatis kembali sebagai Master jika terputus
+                            </p>
                         </div>
                     </div>
                     <div class="master-controls">
@@ -87,10 +112,16 @@
                                 class="btn btn-secondary">
                             <i class="fas fa-stop"></i> Stop
                         </button>
-                        <button @click="releaseMasterRole()" 
-                                class="btn btn-outline">
-                            <i class="fas fa-sign-out-alt"></i> Lepaskan Peran Master
-                        </button>
+                        <div class="master-release-options">
+                            <button @click="releaseMasterRole(false)" 
+                                    class="btn btn-outline">
+                                <i class="fas fa-sign-out-alt"></i> Lepaskan Saja
+                            </button>
+                            <button @click="releaseMasterRole(true)" 
+                                    class="btn btn-outline btn-danger">
+                                <i class="fas fa-times-circle"></i> Lepaskan & Hapus Preferensi
+                            </button>
+                        </div>
                     </div>
                     <div class="master-stats" x-show="currentAudio">
                         <div class="stat">
@@ -100,6 +131,10 @@
                         <div class="stat">
                             <i class="fas fa-microphone"></i>
                             <span>Dari: <strong x-text="currentAudio?.fromClientId || 'Unknown'"></strong></span>
+                        </div>
+                        <div class="stat">
+                            <i class="fas fa-history"></i>
+                            <span>Status: <strong x-text="isPlaying ? 'Sedang Diputar' : 'Siap'"></strong></span>
                         </div>
                     </div>
                 </div>
@@ -115,17 +150,27 @@
             <div class="card-body">
                 <div class="clients-grid">
                     <template x-for="client in connectedClients" :key="client.id">
-                        <div class="client-card" :class="{ 'master': client.isMaster }">
-                            <div class="client-avatar" :class="{ 'master': client.isMaster }">
-                                <i class="fas" :class="client.isMaster ? 'fa-crown' : 'fa-desktop'"></i>
+                        <div class="client-card" :class="{ 'master': client.isMaster, 'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster }">
+                            <div class="client-avatar" :class="{ 'master': client.isMaster, 'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster }">
+                                <i class="fas" :class="client.isMaster ? 'fa-crown' : (connectedClients.find(c => c.id === client.id)?.wantsToBeMaster ? 'fa-hourglass-half' : 'fa-desktop')"></i>
                             </div>
                             <div class="client-info">
                                 <h4 x-text="client.id.substring(0, 12)"></h4>
-                                <p :class="{ 'master': client.isMaster }" 
-                                   x-text="client.isMaster ? 'Master Controller' : 'Client'"></p>
+                                <div class="client-roles">
+                                    <span :class="{ 'master': client.isMaster }" 
+                                          x-text="client.isMaster ? 'Master Controller' : 'Client'"></span>
+                                    <span x-show="connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster" 
+                                          class="wants-master-badge">
+                                        <i class="fas fa-clock"></i> Ingin Master
+                                    </span>
+                                </div>
                                 <small x-text="formatTime(client.joinedAt)"></small>
                             </div>
-                            <div class="client-status" :class="{ 'online': true, 'master': client.isMaster }">
+                            <div class="client-status" :class="{ 
+                                'online': true, 
+                                'master': client.isMaster,
+                                'wants-master': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster
+                            }">
                                 <i class="fas fa-circle"></i>
                             </div>
                         </div>
@@ -160,23 +205,9 @@
                         <button @click="pasteText()" class="btn btn-outline">
                             <i class="fas fa-paste"></i> Tempel
                         </button>
-                        <!-- <button @click="loadExample()" class="btn btn-outline">
+                        <button @click="loadExample()" class="btn btn-outline">
                             <i class="fas fa-lightbulb"></i> Contoh
-                        </button> -->
-                                   <button @click="convertToSpeech()" 
-                        :disabled="isLoading || !text || isMaster && !isMasterReady"
-                        class="btn btn-primary btn-convert">
-                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
-                    <span x-text="getConvertButtonText()"></span>
-                </button>
-                
-                <button @click="convertAndBroadcast()" 
-                        :disabled="isLoading || !text || !isMaster"
-                        x-show="isMaster"
-                        class="btn btn-success">
-                    <i class="fas fa-broadcast-tower"></i>
-                    <span>Kirim ke Semua</span>
-                </button>
+                        </button>
                     </div>
                 </div>
             </section>
@@ -232,7 +263,7 @@
             </section>
 
             <!-- Action Section -->
-            <!-- <section class="action-section">
+            <section class="action-section">
                 <button @click="convertToSpeech()" 
                         :disabled="isLoading || !text || isMaster && !isMasterReady"
                         class="btn btn-primary btn-convert">
@@ -247,7 +278,7 @@
                     <i class="fas fa-broadcast-tower"></i>
                     <span>Kirim ke Semua</span>
                 </button>
-            </section> -->
+            </section>
 
             <!-- Audio Player Section (Master Only) -->
             <section x-show="isMaster && currentAudio" class="card audio-section">
@@ -396,10 +427,16 @@
                 <div class="footer-info">
                     <p>TTS Multi-Client System v2.0 &copy; 2024</p>
                     <p class="footer-note">Sistem Text-to-Speech dengan output audio terpusat</p>
+                    <p class="footer-feature">
+                        <i class="fas fa-sync-alt"></i> Fitur Master Auto-Reconnect Aktif
+                    </p>
                 </div>
                 <div class="footer-links">
                     <button @click="showSystemInfo()" class="btn-link">
                         <i class="fas fa-info-circle"></i> Info Sistem
+                    </button>
+                    <button @click="toggleMasterPreference()" class="btn-link">
+                        <i class="fas fa-crown"></i> Pengaturan Master
                     </button>
                     <button @click="testConnection()" class="btn-link">
                         <i class="fas fa-wifi"></i> Test Koneksi
@@ -413,6 +450,112 @@
     </div>
 
     <!-- Modals -->
+    <!-- Master Preference Modal -->
+    <div x-show="showMasterPreferenceModal" class="modal-overlay" @click.self="showMasterPreferenceModal = false">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3><i class="fas fa-crown"></i> Pengaturan Master</h3>
+                <button @click="showMasterPreferenceModal = false" class="btn-close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="master-preference">
+                    <div class="preference-section">
+                        <h4><i class="fas fa-user-crown"></i> Preferensi Master</h4>
+                        
+                        <div class="preference-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" x-model="wantsToBeMaster" @change="saveMasterPreference()">
+                                <div class="checkbox-content">
+                                    <strong>Ingin selalu menjadi Master</strong>
+                                    <p>Sistem akan otomatis meminta peran Master ketika Anda terhubung dan belum ada Master aktif.</p>
+                                </div>
+                            </label>
+                        </div>
+                        
+                        <div class="preference-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" x-model="autoRequestMaster" @change="saveMasterPreference()">
+                                <div class="checkbox-content">
+                                    <strong>Otomatis request Master setelah reconnect</strong>
+                                    <p>Akan mencoba mengambil peran Master jika terputus dan menyambung kembali.</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="preference-section">
+                        <h4><i class="fas fa-info-circle"></i> Informasi Master</h4>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <i class="fas fa-check-circle"></i>
+                                <div>
+                                    <strong>Satu Master Aktif</strong>
+                                    <p>Hanya satu Master yang aktif dalam sistem</p>
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <i class="fas fa-clock"></i>
+                                <div>
+                                    <strong>Auto-Reconnect</strong>
+                                    <p>Master akan otomatis kembali saat reconnect</p>
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <i class="fas fa-save"></i>
+                                <div>
+                                    <strong>Preferensi Tersimpan</strong>
+                                    <p>Preferensi disimpan di browser ini</p>
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <i class="fas fa-sync-alt"></i>
+                                <div>
+                                    <strong>State Recovery</strong>
+                                    <p>Status audio disimpan dan dipulihkan</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="preference-section current-status">
+                        <h4><i class="fas fa-chart-bar"></i> Status Saat Ini</h4>
+                        <div class="status-grid">
+                            <div class="status-item">
+                                <span>Status Master:</span>
+                                <strong :class="masterStatusColor" x-text="masterStatusBadge"></strong>
+                            </div>
+                            <div class="status-item">
+                                <span>Ingin Master:</span>
+                                <strong x-text="wantsToBeMaster ? 'Ya' : 'Tidak'"></strong>
+                            </div>
+                            <div class="status-item">
+                                <span>Auto-Reconnect:</span>
+                                <strong x-text="autoRequestMaster ? 'Aktif' : 'Nonaktif'"></strong>
+                            </div>
+                            <div class="status-item">
+                                <span>Client ID:</span>
+                                <strong x-text="clientIdShort || 'Belum terhubung'"></strong>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="preference-actions">
+                        <button @click="clearMasterPreference(); showMasterPreferenceModal = false" 
+                                class="btn btn-outline btn-danger">
+                            <i class="fas fa-trash"></i> Hapus Semua Preferensi
+                        </button>
+                        <button @click="showMasterPreferenceModal = false" class="btn btn-primary">
+                            <i class="fas fa-check"></i> Simpan & Tutup
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Info Modal -->
     <div x-show="showSystemInfoModal" class="modal-overlay" @click.self="showSystemInfoModal = false">
         <div class="modal">
             <div class="modal-header">
@@ -445,10 +588,20 @@
                         </div>
                     </div>
                     
+                    <h5><i class="fas fa-sync-alt"></i> Fitur Auto-Reconnect Master</h5>
+                    <p>Sistem ini memiliki fitur auto-reconnect untuk Master Controller:</p>
+                    <ul>
+                        <li>Master preference disimpan di localStorage</li>
+                        <li>Otomatis request role Master saat reconnect</li>
+                        <li>State audio disimpan dan dipulihkan</li>
+                        <li>Max 3x reconnect attempts</li>
+                        <li>Preferensi bisa diatur melalui "Pengaturan Master"</li>
+                    </ul>
+                    
                     <h5>Alur Kerja:</h5>
                     <ol>
                         <li>Klien terhubung ke server</li>
-                        <li>Satu klien menjadi Master</li>
+                        <li>Satu klien menjadi Master (manual atau auto)</li>
                         <li>Klien lain mengirim teks</li>
                         <li>Server konversi teks ke audio</li>
                         <li>Audio dikirim ke Master</li>
@@ -459,6 +612,7 @@
         </div>
     </div>
 
+    <!-- Help Modal -->
     <div x-show="showHelpModal" class="modal-overlay" @click.self="showHelpModal = false">
         <div class="modal">
             <div class="modal-header">
@@ -484,6 +638,7 @@
                         <div class="step-content">
                             <h5>Menentukan Master</h5>
                             <p>Di komputer yang memiliki speaker (output audio), klik "Jadikan Master". Komputer ini akan memutar semua audio.</p>
+                            <p><strong>Tips:</strong> Aktifkan "Ingin selalu menjadi Master" di Pengaturan Master untuk auto-reconnect.</p>
                         </div>
                     </div>
                     
@@ -507,8 +662,9 @@
                     <ul>
                         <li><strong>Audio tidak keluar:</strong> Pastikan komputer Master memiliki speaker aktif dan volume cukup.</li>
                         <li><strong>Tidak bisa jadi Master:</strong> Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</li>
-                        <li><strong>Koneksi terputus:</strong> Refresh halaman atau periksa jaringan.</li>
+                        <li><strong>Koneksi terputus:</strong> Sistem akan otomatis reconnect. Master akan coba kembali sebagai Master.</li>
                         <li><strong>Teks tidak terkirim:</strong> Pastikan ada Master yang aktif dan teks tidak kosong.</li>
+                        <li><strong>Auto-reconnect tidak bekerja:</strong> Cek "Pengaturan Master" dan pastikan preferensi sudah disimpan.</li>
                     </ul>
                 </div>
             </div>

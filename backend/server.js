@@ -10,17 +10,19 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT) || 5000,
-  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000
+  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000,
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 
-// Middleware (tanpa CORS)
+// Middleware
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Serve static files from frontend directory
 app.use(express.static(path.join(__dirname, '../frontend')));
 
 // Store connected clients and their info
@@ -45,7 +47,9 @@ io.on('connection', (socket) => {
     isMaster: false,
     joinedAt: new Date(),
     lastActivity: new Date(),
-    clientInfo: {}
+    clientInfo: {},
+    wantsToBeMaster: false,
+    reconnected: false
   });
   
   // Send welcome message with client ID
@@ -79,35 +83,71 @@ io.on('connection', (socket) => {
     }))
   });
   
-  // Handle client info update
+  // Handle client info update with master preference
   socket.on('client-info', (info) => {
     const client = connectedClients.get(socket.id);
     if (client) {
       client.clientInfo = { ...client.clientInfo, ...info };
       client.lastActivity = new Date();
+      
+      // Store if client wants to be master
+      if (info.wantsToBeMaster !== undefined) {
+        client.wantsToBeMaster = info.wantsToBeMaster;
+        console.log(`Client ${client.id} wantsToBeMaster: ${info.wantsToBeMaster}`);
+      }
+      
+      // Check if reconnecting client wants to be master
+      if (info.reconnected && info.wantsToBeMaster && !masterClient) {
+        console.log(`Auto-granting master to reconnecting client: ${client.id}`);
+        // Auto-grant master to reconnecting client who wants it
+        masterClient = socket.id;
+        client.isMaster = true;
+        
+        socket.emit('master-role-granted', { 
+          isMaster: true,
+          clientId: client.id,
+          message: 'Anda kembali sebagai Master Controller',
+          autoReconnected: true
+        });
+        
+        io.emit('master-changed', { 
+          masterClientId: client.id,
+          masterSocketId: socket.id,
+          timestamp: new Date().toISOString(),
+          reason: 'auto-reconnect'
+        });
+      }
     }
   });
   
   // Handle request to become master
   socket.on('request-master-role', (data) => {
     const client = connectedClients.get(socket.id);
-    console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.id}`);
+    console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.id}, wantsToBeMaster: ${data.wantsToBeMaster}`);
+    
+    // Update client preference
+    if (client) {
+      client.wantsToBeMaster = data.wantsToBeMaster || false;
+    }
     
     if (!masterClient) {
       // Grant master role
       masterClient = socket.id;
       connectedClients.get(socket.id).isMaster = true;
+      connectedClients.get(socket.id).wantsToBeMaster = true;
       
       socket.emit('master-role-granted', { 
         isMaster: true,
         clientId: client.id,
-        message: 'Anda sekarang adalah Master Controller'
+        message: 'Anda sekarang adalah Master Controller',
+        autoReconnected: data.autoReconnect || false
       });
       
       io.emit('master-changed', { 
         masterClientId: client.id,
         masterSocketId: socket.id,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        reason: 'manual-request'
       });
       
       console.log(`[${new Date().toISOString()}] Client ${client.id} is now master`);
@@ -131,11 +171,16 @@ io.on('connection', (socket) => {
   });
   
   // Handle release master role
-  socket.on('release-master-role', () => {
+  socket.on('release-master-role', (data) => {
     if (socket.id === masterClient) {
       const oldMasterId = connectedClients.get(masterClient)?.id;
       masterClient = null;
       connectedClients.get(socket.id).isMaster = false;
+      
+      // Update preference if specified
+      if (data && data.clearPreference) {
+        connectedClients.get(socket.id).wantsToBeMaster = false;
+      }
       
       io.emit('master-released', {
         oldMasterId: oldMasterId,
@@ -145,7 +190,8 @@ io.on('connection', (socket) => {
       
       socket.emit('master-role-released', {
         isMaster: false,
-        message: 'Anda telah melepaskan peran master'
+        message: 'Anda telah melepaskan peran master',
+        preferenceCleared: data ? data.clearPreference : false
       });
       
       console.log(`[${new Date().toISOString()}] Client ${oldMasterId} released master role`);
@@ -364,18 +410,20 @@ io.on('connection', (socket) => {
     });
   });
   
-  // Handle disconnect
+  // Handle disconnect with auto-reconnect data
   socket.on('disconnect', (reason) => {
     const client = connectedClients.get(socket.id);
     console.log(`[${new Date().toISOString()}] Client disconnected: ${client?.id || socket.id} - Reason: ${reason}`);
     
-    // If master disconnects, clear master role
+    // If master disconnects, clear master role but keep preference
     if (socket.id === masterClient) {
       const disconnectedMasterId = client?.id;
+      const wantsToBeMaster = client?.wantsToBeMaster || false;
       masterClient = null;
       
       io.emit('master-disconnected', {
         disconnectedMasterId: disconnectedMasterId,
+        wantsToBeMaster: wantsToBeMaster,
         timestamp: new Date().toISOString(),
         message: 'Master Controller terputus. Silakan klien lain mengambil alih peran master.'
       });
@@ -391,6 +439,9 @@ io.on('connection', (socket) => {
         masterRequestQueue = [];
       }
     }
+    
+    // Remove from connected clients but keep track of preference?
+    // Actually, we remove from connected clients but the client can store preference locally
     
     // Remove from connected clients
     connectedClients.delete(socket.id);
@@ -457,7 +508,8 @@ app.get('/api/clients', (req, res) => {
     isMaster: client.isMaster,
     joinedAt: client.joinedAt,
     lastActivity: client.lastActivity,
-    clientInfo: client.clientInfo
+    clientInfo: client.clientInfo,
+    wantsToBeMaster: client.wantsToBeMaster
   }));
   
   res.json({
@@ -471,7 +523,7 @@ app.get('/api/clients', (req, res) => {
 });
 
 app.post('/api/set-master', (req, res) => {
-  const { clientId } = req.body;
+  const { clientId, force = false } = req.body;
   
   if (!clientId) {
     return res.status(400).json({
@@ -502,6 +554,9 @@ app.post('/api/set-master', (req, res) => {
   // Update client status
   connectedClients.forEach((client, socketId) => {
     client.isMaster = (socketId === targetSocketId);
+    if (socketId === targetSocketId) {
+      client.wantsToBeMaster = true;
+    }
   });
   
   // Notify all clients
@@ -510,13 +565,15 @@ app.post('/api/set-master', (req, res) => {
     masterSocketId: targetSocketId,
     oldMasterId: oldMaster ? connectedClients.get(oldMaster)?.id : null,
     timestamp: new Date().toISOString(),
-    changedBy: 'api'
+    changedBy: 'api',
+    forced: force
   });
   
   res.json({
     success: true,
     message: `Client ${clientId} sekarang menjadi Master Controller`,
-    masterClient: clientId
+    masterClient: clientId,
+    forced: force
   });
 });
 
@@ -665,6 +722,34 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// New API endpoint to get master preference
+app.get('/api/master-preference/:clientId', (req, res) => {
+  const { clientId } = req.params;
+  
+  let targetSocketId = null;
+  connectedClients.forEach((client, socketId) => {
+    if (client.id === clientId) {
+      targetSocketId = socketId;
+    }
+  });
+  
+  if (targetSocketId) {
+    const client = connectedClients.get(targetSocketId);
+    res.json({
+      success: true,
+      clientId: clientId,
+      wantsToBeMaster: client.wantsToBeMaster || false,
+      isMaster: client.isMaster || false
+    });
+  } else {
+    res.json({
+      success: false,
+      error: 'Client tidak ditemukan',
+      clientId: clientId
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(`[${new Date().toISOString()}] Server Error:`, err.stack);
@@ -703,11 +788,9 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   GET  ${serverUrl}/api/languages   - Daftar bahasa yang didukung`);
   console.log(`   POST ${serverUrl}/api/clear-queue - Hapus antrian TTS`);
   console.log(`\n🌐 Frontend tersedia di: ${serverUrl}`);
-  console.log(`\n🔧 Cara penggunaan:`);
-  console.log(`   1. Buka ${serverUrl} di browser komputer master`);
-  console.log(`   2. Klik "Jadikan Master"`);
-  console.log(`   3. Buka ${serverUrl} di komputer lain`);
-  console.log(`   4. Masukkan teks dan kirim dari komputer lain`);
-  console.log(`   5. Audio akan diputar di komputer master`);
+  console.log(`\n🔧 Fitur Baru: Master Auto-Reconnect`);
+  console.log(`   • Master preference disimpan di localStorage`);
+  console.log(`   • Auto-reconnect saat browser di-refresh`);
+  console.log(`   • Otomatis request master role saat tersedia`);
   console.log(`\n========================================\n`);
 });
