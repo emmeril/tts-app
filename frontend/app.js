@@ -311,21 +311,23 @@ function ttsApp() {
             });
             
             this.socket.on('tts-audio', (data) => {
-                console.log('Master menerima TTS audio dari client:', data);
+                console.log('Menerima TTS audio:', data);
                 
-                // Store the audio data
-                this.currentAudio = data;
-                this.saveAudioState();
-                
-                // Pastikan audio memiliki URL
-                if (!data.audioUrl) {
-                    console.error('Audio URL tidak ditemukan di data:', data);
-                    this.showNotification('Error: Audio tidak valid', 'error');
-                    return;
-                }
-                
-                // Auto-play if this client is master
+                // PERBAIKAN: Hanya Master yang memproses audio ini
                 if (this.isMaster) {
+                    console.log('Master menerima TTS audio dari client:', data);
+                    
+                    // Store the audio data
+                    this.currentAudio = data;
+                    this.saveAudioState();
+                    
+                    // Pastikan audio memiliki URL
+                    if (!data.audioUrl) {
+                        console.error('Audio URL tidak ditemukan di data:', data);
+                        this.showNotification('Error: Audio tidak valid', 'error');
+                        return;
+                    }
+                    
                     console.log('Master akan memutar audio dari:', data.fromClientId);
                     
                     // Tampilkan notifikasi
@@ -336,20 +338,29 @@ function ttsApp() {
                         this.playAudio();
                     }, 300);
                 } else {
-                    console.log('Bukan master, hanya menyimpan audio');
+                    // Client biasa hanya menampilkan notifikasi, TIDAK menyimpan atau memutar
+                    console.log('Client biasa: Audio dikirim ke Master');
+                    this.showNotification(
+                        `Teks telah dikirim ke Master ${data.masterClientId?.substring(0, 8) || ''}`,
+                        'info'
+                    );
                 }
             });
             
             this.socket.on('tts-audio-broadcast', (data) => {
                 console.log('Menerima broadcast audio:', data);
-                this.currentAudio = data;
-                this.saveAudioState();
-                this.showNotification(`Broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
                 
-                // Auto-play broadcast untuk semua client
-                setTimeout(() => {
-                    this.playAudio();
-                }, 300);
+                // PERBAIKAN: Pastikan ini broadcast yang valid
+                if (data.broadcast) {
+                    this.currentAudio = data;
+                    this.saveAudioState();
+                    this.showNotification(`Broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
+                    
+                    // Auto-play broadcast untuk semua client
+                    setTimeout(() => {
+                        this.playAudio();
+                    }, 300);
+                }
             });
             
             this.socket.on('tts-complete', (data) => {
@@ -628,15 +639,23 @@ function ttsApp() {
                 text: this.text,
                 language: this.language,
                 speed: this.speed,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                broadcast: true
             });
             
             this.showNotification('Mengirim broadcast ke semua komputer...', 'info');
         },
         
-        // Play audio
+        // Play audio - PERBAIKAN UTAMA
         playAudio(retryCount = 0) {
             console.log(`playAudio called, retry: ${retryCount}`);
+            
+            // PERBAIKAN: Jika bukan master dan audio bukan broadcast, jangan putar
+            if (!this.isMaster && !this.currentAudio?.broadcast) {
+                console.log('Client biasa tidak memutar audio non-broadcast');
+                this.showNotification('Audio hanya dapat diputar oleh Master Controller', 'info');
+                return;
+            }
             
             if (retryCount >= this.maxPlayRetries) {
                 console.error('Max retry attempts reached');
@@ -661,23 +680,17 @@ function ttsApp() {
                 console.error('Audio element tidak ditemukan');
                 
                 if (this.isMaster) {
-                    let player = document.getElementById('masterAudioPlayer');
-                    if (!player) {
-                        player = document.createElement('audio');
-                        player.id = 'masterAudioPlayer';
-                        player.controls = true;
-                        player.className = 'w-full rounded-lg';
-                        document.body.appendChild(player);
-                    }
+                    let player = document.createElement('audio');
+                    player.id = 'masterAudioPlayer';
+                    player.controls = true;
+                    player.className = 'w-full rounded-lg';
+                    document.body.appendChild(player);
                     audioElement = player;
                 } else {
-                    let hidden = document.getElementById('hiddenAudio');
-                    if (!hidden) {
-                        hidden = document.createElement('audio');
-                        hidden.id = 'hiddenAudio';
-                        hidden.className = 'hidden';
-                        document.body.appendChild(hidden);
-                    }
+                    let hidden = document.createElement('audio');
+                    hidden.id = 'hiddenAudio';
+                    hidden.className = 'hidden';
+                    document.body.appendChild(hidden);
                     audioElement = hidden;
                 }
             }

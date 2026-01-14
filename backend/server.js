@@ -237,7 +237,7 @@ io.on('connection', (socket) => {
         if (!masterClient) {
             masterRequestQueue.push({
                 ...data,
-                text: trimmedText, // Gunakan teks yang sudah di-trim
+                text: trimmedText,
                 fromClientId: client.id,
                 timestamp: new Date().toISOString(),
                 priority: priority
@@ -265,14 +265,16 @@ io.on('connection', (socket) => {
             speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
         });
         
-        // Send audio to MASTER CLIENT only
+        // PERBAIKAN: Kirim audio HANYA ke Master dengan flag forMasterOnly
         io.to(masterClient).emit('tts-audio', {
             ...result,
             fromClientId: client.id,
             fromClientSocketId: socket.id,
             timestamp: new Date().toISOString(),
             priority: priority,
-            requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+            requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            forMasterOnly: true,
+            masterClientId: connectedClients.get(masterClient)?.id
         });
         
         // Send confirmation to sender
@@ -296,7 +298,6 @@ io.on('connection', (socket) => {
     } catch (error) {
         console.error(`[${new Date().toISOString()}] TTS Error for ${client?.id}:`, error.message);
         
-        // Error message yang lebih user-friendly
         let userMessage = 'Gagal mengonversi teks ke suara';
         let suggestion = 'Coba gunakan teks yang lebih pendek atau bahasa lain';
         
@@ -344,7 +345,7 @@ io.on('connection', (socket) => {
         speed: speed
       });
       
-      // Send audio to ALL clients
+      // Send audio to ALL clients with broadcast flag
       io.emit('tts-audio-broadcast', {
         ...result,
         fromClientId: client.id,
@@ -439,9 +440,6 @@ io.on('connection', (socket) => {
         masterRequestQueue = [];
       }
     }
-    
-    // Remove from connected clients but keep track of preference?
-    // Actually, we remove from connected clients but the client can store preference locally
     
     // Remove from connected clients
     connectedClients.delete(socket.id);
@@ -613,7 +611,6 @@ app.post('/api/tts', async (req, res) => {
         
         console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
         
-        // Validasi lebih detail
         if (!text || typeof text !== 'string') {
             return res.status(400).json({
                 success: false,
@@ -657,7 +654,8 @@ app.post('/api/tts', async (req, res) => {
                 ...result,
                 fromClientId: 'api-request',
                 timestamp: new Date().toISOString(),
-                priority: 'high'
+                priority: 'high',
+                forMasterOnly: true
             });
         }
         
@@ -671,7 +669,6 @@ app.post('/api/tts', async (req, res) => {
     } catch (error) {
         console.error('API TTS Error:', error.message);
         
-        // Error yang lebih spesifik
         let errorMessage = error.message || 'Terjadi kesalahan pada server';
         let suggestion = 'Coba kurangi panjang teks atau ganti bahasa';
         
@@ -722,7 +719,6 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-// New API endpoint to get master preference
 app.get('/api/master-preference/:clientId', (req, res) => {
   const { clientId } = req.params;
   
