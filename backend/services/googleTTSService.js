@@ -161,7 +161,7 @@ class GoogleTTSService {
   /**
    * Validasi input
    */
-validateInput(text, language) {
+  validateInput(text, language) {
     const errors = [];
     
     // Cek jika text ada dan bertipe string
@@ -187,15 +187,12 @@ validateInput(text, language) {
     
     console.log(`Validation for text (${text.length} chars):`, errors.length > 0 ? errors : 'Valid');
     return errors;
-}
+  }
 
   /**
    * Konversi text ke speech
    */
- /**
- * Konversi text ke speech
- */
-async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }) {
+  async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }) {
     try {
         // Validasi input
         const validationErrors = this.validateInput(text, language);
@@ -241,8 +238,7 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
         
         console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}`);
         
-        // PERBAIKAN DI SINI: Konfigurasi Axios yang benar
-        // maxContentLength dan maxBodyLength harus dalam bytes
+        // Konfigurasi Axios
         const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2; // Default 2MB
         const maxSizeBytes = maxSizeMB * 1024 * 1024; // Convert MB to bytes
         
@@ -346,7 +342,7 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
         
         throw new Error(`${userMessage} (Detail: ${error.message})`);
     }
-}
+  }
 
   /**
    * Generate token untuk beberapa bahasa (optional)
