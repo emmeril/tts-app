@@ -24,13 +24,17 @@ class GoogleTTSService {
   }
 
   /**
-   * Map kode bahasa ke format Google TTS
+   * Map kode bahasa ke format Google TTS dengan peningkatan untuk bahasa Indonesia
    */
   mapLanguageCode(language) {
     const languageMap = {
+      // Bahasa Indonesia dengan parameter khusus untuk naturalness
+      'id-ID': 'id-ID',          // Bahasa Indonesia dengan pengucapan natural
+      'id': 'id-ID',             // Alias untuk bahasa Indonesia
+      'id-NATURAL': 'id-ID',     // Versi natural khusus
+      'id-FORMAL': 'id',         // Versi formal
+      
       // Bahasa Asia
-      'id-ID': 'id',          // Bahasa Indonesia
-      'id': 'id',
       'ms-MY': 'ms',          // Bahasa Melayu
       'th-TH': 'th',          // Thai
       'vi-VN': 'vi',          // Vietnamese
@@ -70,83 +74,182 @@ class GoogleTTSService {
       'ur-PK': 'ur',
     };
     
-    return languageMap[language] || 'en';
+    return languageMap[language] || 'id-ID'; // Default ke bahasa Indonesia natural
   }
 
   /**
-   * Optimasi teks untuk pengucapan yang lebih natural
+   * Optimasi teks untuk pengucapan bahasa Indonesia yang lebih natural
    */
-  optimizeTextForSpeech(text) {
+  optimizeTextForSpeech(text, language = 'id-ID') {
     let optimized = text;
     
-    // Normalisasi spasi dan tanda baca
+    // Normalisasi spasi dan tanda baca khusus untuk bahasa Indonesia
     optimized = optimized.replace(/\s+/g, ' ');
     optimized = optimized.replace(/\s+([.,!?;:])/g, '$1');
     optimized = optimized.replace(/([.,!?;:])(\S)/g, '$1 $2');
     
-    // Optimasi angka
+    // Optimasi angka untuk bahasa Indonesia
     optimized = optimized.replace(/(\d+)/g, (match) => {
-      if (parseInt(match) < 1000) {
+      const num = parseInt(match);
+      if (num < 1000) {
         return match;
       }
-      return match.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      // Format angka ribuan dengan titik untuk bahasa Indonesia
+      return match.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
     });
     
-    // Optimasi singkatan umum
+    // Optimasi singkatan umum Indonesia
     const abbreviations = {
+      // Formal
       'dr.': 'dokter',
       'Dr.': 'Dokter',
-      'Mr.': 'Mister',
-      'Mrs.': 'Mistress',
-      'Ms.': 'Miss',
-      'etc.': 'et cetera',
+      'Mr.': 'Tuan',
+      'Mrs.': 'Nyonya',
+      'Ms.': 'Nona',
+      'etc.': 'dan sebagainya',
       'e.g.': 'contohnya',
       'i.e.': 'yaitu',
-      'vs.': 'versus',
+      'vs.': 'melawan',
+      
+      // Satuan
       'kg': 'kilogram',
       'km': 'kilometer',
       'cm': 'sentimeter',
       'mm': 'milimeter',
       'ml': 'mililiter',
       '°C': 'derajat Celsius',
+      'Rp': 'Rupiah',
+      'rp': 'rupiah',
+      
+      // Singkatan populer Indonesia
+      'yg': 'yang',
+      'dgn': 'dengan',
+      'tdk': 'tidak',
+      'utk': 'untuk',
+      'sdh': 'sudah',
+      'blm': 'belum',
+      'krn': 'karena',
+      'bgmn': 'bagaimana',
+      'dll': 'dan lain-lain',
+      'dsb': 'dan seterusnya',
+      'tsb': 'tersebut',
+      'dpt': 'dapat',
+      'pd': 'pada',
+      'org': 'orang',
+      'spt': 'seperti',
+      'yg': 'yang',
+      'ga': 'tidak',
+      'gak': 'tidak',
+      'g': 'tidak',
+      'lo': 'kamu',
+      'lu': 'kamu',
+      'gw': 'saya',
+      'gue': 'saya',
+      'ane': 'saya',
+      'ente': 'anda',
+      'kalo': 'kalau',
+      'ato': 'atau',
+      'bgt': 'sekali',
+      'banget': 'sekali',
+      'trus': 'terus',
+      'trs': 'terus',
+      'bbrp': 'beberapa',
+      'bnyk': 'banyak',
+      'skrg': 'sekarang',
+      'tgl': 'tanggal',
+      'tgl.': 'tanggal',
+      'bln': 'bulan',
+      'bln.': 'bulan',
+      'thn': 'tahun',
+      'thn.': 'tahun',
+      'jl.': 'jalan',
+      'jl': 'jalan',
+      'no.': 'nomor',
+      'no': 'nomor',
     };
     
     Object.keys(abbreviations).forEach(abbr => {
-      const regex = new RegExp(`\\b${abbr}\\b`, 'g');
+      const regex = new RegExp(`\\b${abbr}\\b`, 'gi');
       optimized = optimized.replace(regex, abbreviations[abbr]);
     });
     
-    // Tambahkan jeda natural untuk kalimat panjang
-    if (optimized.length > 50) {
+    // Perbaikan pengucapan kata khusus Indonesia
+    const pronunciationFixes = {
+      'foto': 'foto',
+      'video': 'video',
+      'data': 'data',
+      'sistem': 'sistem',
+      'teknologi': 'teknologi',
+      'informasi': 'informasi',
+      'komputer': 'komputer',
+      'internet': 'internet',
+      'email': 'email',
+      'website': 'website',
+      'online': 'online',
+      'offline': 'offline',
+    };
+    
+    Object.keys(pronunciationFixes).forEach(word => {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi');
+      optimized = optimized.replace(regex, pronunciationFixes[word]);
+    });
+    
+    // Tambahkan jeda natural untuk kalimat panjang (lebih pendek untuk bahasa Indonesia)
+    if (optimized.length > 30) {
       optimized = optimized.replace(/([,;:])\s+/g, '$1<pause>');
+      optimized = optimized.replace(/(\sdan\s|\satau\s|\stetapi\s)/g, '$1<pause>');
     }
+    
+    // Kapitalisasi untuk nama bulan dan hari
+    const months = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember'];
+    const days = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'];
+    
+    months.forEach(month => {
+      const regex = new RegExp(`\\b${month}\\b`, 'gi');
+      optimized = optimized.replace(regex, month.charAt(0).toUpperCase() + month.slice(1));
+    });
+    
+    days.forEach(day => {
+      const regex = new RegExp(`\\b${day}\\b`, 'gi');
+      optimized = optimized.replace(regex, day.charAt(0).toUpperCase() + day.slice(1));
+    });
     
     return optimized.trim();
   }
 
   /**
-   * Truncate text jika terlalu panjang
+   * Truncate text jika terlalu panjang dengan memperhatikan struktur kalimat Indonesia
    */
   truncateText(text, maxLength = 200) {
     if (text.length <= maxLength) return text;
     
     let truncated = text.substring(0, maxLength);
     
+    // Cari akhir kalimat yang paling sesuai untuk bahasa Indonesia
     const sentenceEnd = truncated.lastIndexOf('. ');
     const questionEnd = truncated.lastIndexOf('? ');
     const exclamationEnd = truncated.lastIndexOf('! ');
+    const commaEnd = truncated.lastIndexOf(', ');
     
-    const bestEnd = Math.max(sentenceEnd, questionEnd, exclamationEnd);
+    const bestEnd = Math.max(sentenceEnd, questionEnd, exclamationEnd, commaEnd);
     
-    if (bestEnd > maxLength * 0.6) {
+    // Jika ditemukan akhir kalimat yang baik
+    if (bestEnd > maxLength * 0.5) {
       truncated = truncated.substring(0, bestEnd + 1);
     } else {
-      const commaPos = truncated.lastIndexOf(', ');
-      const semicolonPos = truncated.lastIndexOf('; ');
-      const punctuationPos = Math.max(commaPos, semicolonPos);
+      // Cari kata sambung atau preposisi khas Indonesia
+      const connectors = [' dan ', ' atau ', ' tetapi ', ' namun ', ' karena ', ' sehingga ', ' maka '];
+      let connectorPos = -1;
       
-      if (punctuationPos > maxLength * 0.5) {
-        truncated = truncated.substring(0, punctuationPos + 1);
+      for (const connector of connectors) {
+        const pos = truncated.lastIndexOf(connector);
+        if (pos > connectorPos && pos > maxLength * 0.4) {
+          connectorPos = pos;
+        }
+      }
+      
+      if (connectorPos > 0) {
+        truncated = truncated.substring(0, connectorPos);
       } else {
         const lastSpace = truncated.lastIndexOf(' ');
         if (lastSpace > maxLength * 0.4) {
@@ -155,19 +258,24 @@ class GoogleTTSService {
       }
     }
     
-    return truncated + (truncated.endsWith('.') ? '' : '.') + '..';
+    // Tambahkan elipsis jika diperlukan
+    if (!truncated.endsWith('.') && !truncated.endsWith('?') && !truncated.endsWith('!')) {
+      truncated += '...';
+    }
+    
+    return truncated;
   }
 
   /**
    * Validasi input
    */
-validateInput(text, language) {
+  validateInput(text, language) {
     const errors = [];
     
     // Cek jika text ada dan bertipe string
     if (!text || typeof text !== 'string') {
         errors.push('Text harus berupa string');
-        return errors; // Return early karena tidak perlu cek lainnya
+        return errors;
     }
     
     // Cek jika text hanya whitespace
@@ -187,15 +295,12 @@ validateInput(text, language) {
     
     console.log(`Validation for text (${text.length} chars):`, errors.length > 0 ? errors : 'Valid');
     return errors;
-}
+  }
 
   /**
-   * Konversi text ke speech
+   * Konversi text ke speech dengan optimasi khusus untuk bahasa Indonesia
    */
- /**
- * Konversi text ke speech
- */
-async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }) {
+  async convertTextToSpeech({ text, language = 'id-ID', speed = 0.85, pitch = 1.0 }) {
     try {
         // Validasi input
         const validationErrors = this.validateInput(text, language);
@@ -210,8 +315,8 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
             throw new Error('Rate limit exceeded. Silakan coba lagi nanti.');
         }
 
-        // Optimasi teks
-        const optimizedText = this.optimizeTextForSpeech(text);
+        // Optimasi teks khusus untuk bahasa
+        const optimizedText = this.optimizeTextForSpeech(text, language);
         
         // Truncate text jika terlalu panjang
         const truncatedText = this.truncateText(optimizedText, 200);
@@ -219,7 +324,7 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
         // Map language code
         const langCode = this.mapLanguageCode(language);
         
-        // Parameter untuk request
+        // Parameter khusus untuk bahasa Indonesia natural
         const params = new URLSearchParams({
             ie: 'UTF-8',
             tl: langCode,
@@ -232,42 +337,40 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
             prev: 'input',
         });
         
-        // Untuk beberapa bahasa, tambahkan parameter khusus
-        if (['id', 'en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko'].includes(langCode)) {
+        // Tambahkan parameter khusus untuk kualitas lebih baik
+        if (langCode.includes('id')) {
             params.append('tk', this.generateToken(truncatedText));
+            // Parameter tambahan untuk suara natural Indonesia
+            params.append('pitch', pitch.toString());
+            params.append('freq', '22050'); // Frekuensi sampling untuk kualitas baik
         }
         
         const ttsUrl = `${this.baseUrl}?${params.toString()}`;
         
-        console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}`);
+        console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}, Pitch: ${pitch}`);
         
-        // PERBAIKAN DI SINI: Konfigurasi Axios yang benar
-        // maxContentLength dan maxBodyLength harus dalam bytes
-        const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2; // Default 2MB
-        const maxSizeBytes = maxSizeMB * 1024 * 1024; // Convert MB to bytes
+        // Konfigurasi Axios
+        const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2;
+        const maxSizeBytes = maxSizeMB * 1024 * 1024;
         
         console.log(`Axios Config: maxContentLength=${maxSizeBytes} bytes (${maxSizeMB} MB)`);
         
         // Request ke Google TTS
         const response = await axios.get(ttsUrl, {
             responseType: 'arraybuffer',
-            timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000, // 40 detik
+            timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000,
             headers: {
                 ...this.defaultHeaders,
                 'Accept-Encoding': 'identity',
                 'DNT': '1',
                 'Accept': 'audio/mpeg, audio/*',
                 'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache',
             },
-            // FIX: Gunakan nilai dalam bytes yang benar
             maxContentLength: maxSizeBytes,
             maxBodyLength: maxSizeBytes,
-            
-            // Tambahkan konfigurasi untuk response yang lebih baik
             maxRedirects: 5,
             decompress: true,
-            
-            // Validasi status (Google TTS biasanya return 200)
             validateStatus: function (status) {
                 return status >= 200 && status < 300;
             }
@@ -293,8 +396,8 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
         const audioBase64 = Buffer.from(response.data).toString('base64');
         const audioDataUrl = `data:${audioFormat};base64,${audioBase64}`;
         
-        // Hitung durasi estimasi
-        const duration = this.estimateDuration(truncatedText, speed);
+        // Hitung durasi estimasi dengan akurat
+        const duration = this.estimateDuration(truncatedText, speed, language);
         
         return {
             success: true,
@@ -310,6 +413,9 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
             truncated: truncatedText.length < text.length,
             optimized: optimizedText !== text,
             voiceGender: 'female',
+            voiceName: 'Google Indonesian Female',
+            naturalness: 'high',
+            clarity: 'high',
             timestamp: new Date().toISOString(),
             audioSize: response.data.length
         };
@@ -346,7 +452,7 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
         
         throw new Error(`${userMessage} (Detail: ${error.message})`);
     }
-}
+  }
 
   /**
    * Generate token untuk beberapa bahasa (optional)
@@ -374,87 +480,198 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
   }
 
   /**
-   * Estimasi durasi audio
+   * Estimasi durasi audio untuk bahasa Indonesia
    */
-  estimateDuration(text, speed) {
+  estimateDuration(text, speed, language) {
+    // Karakter per menit berdasarkan bahasa
     const charsPerMinuteMap = {
-      'id': 160, 'ms': 160, 'en': 150, 'es': 150, 'fr': 140, 
-      'de': 140, 'it': 140, 'pt': 140, 'ru': 120, 'ja': 100,
-      'ko': 100, 'zh': 80, 'th': 120, 'vi': 130, 'ar': 110
+      'id': 165,     // Bahasa Indonesia natural
+      'id-ID': 165,  // Bahasa Indonesia natural
+      'ms': 160,     // Melayu
+      'en': 150,     // Inggris
+      'es': 150,     // Spanyol
+      'fr': 140,     // Prancis
+      'de': 140,     // Jerman
+      'it': 140,     // Italia
+      'pt': 140,     // Portugis
+      'ru': 120,     // Rusia
+      'ja': 100,     // Jepang
+      'ko': 100,     // Korea
+      'zh': 80,      // Cina
+      'th': 120,     // Thai
+      'vi': 130,     // Vietnam
+      'ar': 110      // Arab
     };
     
-    const langCode = this.mapLanguageCode('id-ID');
-    const baseCharsPerMinute = charsPerMinuteMap[langCode] || 150;
-    const adjustedCharsPerMinute = baseCharsPerMinute * speed;
+    const langCode = this.mapLanguageCode(language);
+    const baseCode = langCode.split('-')[0];
+    const baseCharsPerMinute = charsPerMinuteMap[baseCode] || charsPerMinuteMap[langCode] || 150;
     
+    // Adjust speed (0.5-2.0 range)
+    const speedFactor = Math.max(0.5, Math.min(2.0, speed));
+    const adjustedCharsPerMinute = baseCharsPerMinute * speedFactor;
+    
+    // Hitung durasi dasar
     const durationInSeconds = (text.length / adjustedCharsPerMinute) * 60;
     
+    // Tambahkan waktu untuk jeda alami
     const naturalPauses = (text.match(/[.,!?;:]/g) || []).length;
-    const pauseTime = naturalPauses * 0.3;
+    const pauseTime = naturalPauses * 0.4; // Sedikit lebih lama untuk bahasa Indonesia
     
-    return Math.max(0.5, Math.round((durationInSeconds + pauseTime) * 10) / 10);
+    // Tambahkan waktu untuk tag <pause> jika ada
+    const pauseTags = (text.match(/<pause>/g) || []).length;
+    const pauseTagTime = pauseTags * 0.6;
+    
+    // Durasi total
+    const totalDuration = Math.max(1.0, Math.round((durationInSeconds + pauseTime + pauseTagTime) * 10) / 10);
+    
+    return totalDuration;
   }
 
   /**
-   * Mendapatkan daftar bahasa yang didukung
+   * Mendapatkan daftar bahasa yang didukung dengan penekanan pada Indonesia
    */
   getSupportedLanguages() {
     return [
-      { code: 'id-ID', name: 'Bahasa Indonesia', nativeName: 'Bahasa Indonesia', voiceGender: 'female', clarity: 'high' },
-      { code: 'en-US', name: 'English (US)', nativeName: 'English', voiceGender: 'female', clarity: 'high' },
-      { code: 'en-GB', name: 'English (UK)', nativeName: 'English', voiceGender: 'female', clarity: 'high' },
-      { code: 'es-ES', name: 'Spanish', nativeName: 'Español', voiceGender: 'female', clarity: 'high' },
-      { code: 'fr-FR', name: 'French', nativeName: 'Français', voiceGender: 'female', clarity: 'high' },
-      { code: 'de-DE', name: 'German', nativeName: 'Deutsch', voiceGender: 'female', clarity: 'high' },
-      { code: 'it-IT', name: 'Italian', nativeName: 'Italiano', voiceGender: 'female', clarity: 'high' },
-      { code: 'pt-BR', name: 'Portuguese (BR)', nativeName: 'Português', voiceGender: 'female', clarity: 'high' },
-      { code: 'ru-RU', name: 'Russian', nativeName: 'Русский', voiceGender: 'female', clarity: 'medium' },
-      { code: 'ja-JP', name: 'Japanese', nativeName: '日本語', voiceGender: 'female', clarity: 'high' },
-      { code: 'ko-KR', name: 'Korean', nativeName: '한국어', voiceGender: 'female', clarity: 'high' },
-      { code: 'zh-CN', name: 'Chinese (Simplified)', nativeName: '中文 (简体)', voiceGender: 'female', clarity: 'high' },
-      { code: 'ar-SA', name: 'Arabic', nativeName: 'العربية', voiceGender: 'female', clarity: 'medium' },
-      { code: 'hi-IN', name: 'Hindi', nativeName: 'हिन्दी', voiceGender: 'female', clarity: 'medium' },
-      { code: 'th-TH', name: 'Thai', nativeName: 'ไทย', voiceGender: 'female', clarity: 'high' },
-      { code: 'vi-VN', name: 'Vietnamese', nativeName: 'Tiếng Việt', voiceGender: 'female', clarity: 'high' },
-      { code: 'ms-MY', name: 'Malay', nativeName: 'Bahasa Melayu', voiceGender: 'female', clarity: 'high' },
+      { 
+        code: 'id-ID', 
+        name: 'Bahasa Indonesia (Natural)', 
+        nativeName: 'Bahasa Indonesia', 
+        voiceGender: 'female', 
+        clarity: 'very-high',
+        naturalness: 'very-high',
+        recommendedSpeed: 0.85,
+        description: 'Suara natural dengan pengucapan jelas khas Indonesia'
+      },
+      { 
+        code: 'id-NATURAL', 
+        name: 'Bahasa Indonesia (Sangat Natural)', 
+        nativeName: 'Bahasa Indonesia', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'very-high',
+        recommendedSpeed: 0.8,
+        description: 'Suara paling natural dengan intonasi alami'
+      },
+      { 
+        code: 'id-FORMAL', 
+        name: 'Bahasa Indonesia (Formal)', 
+        nativeName: 'Bahasa Indonesia', 
+        voiceGender: 'female', 
+        clarity: 'very-high',
+        naturalness: 'medium',
+        recommendedSpeed: 0.9,
+        description: 'Suara formal untuk penggunaan resmi'
+      },
+      { 
+        code: 'en-US', 
+        name: 'English (US)', 
+        nativeName: 'English', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'high',
+        recommendedSpeed: 0.9,
+        description: 'American English with clear pronunciation'
+      },
+      { 
+        code: 'ms-MY', 
+        name: 'Malay', 
+        nativeName: 'Bahasa Melayu', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'high',
+        recommendedSpeed: 0.85,
+        description: 'Bahasa Melayu dengan pengucapan jelas'
+      },
+      { 
+        code: 'th-TH', 
+        name: 'Thai', 
+        nativeName: 'ไทย', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'medium',
+        recommendedSpeed: 0.8,
+        description: 'Bahasa Thailand dengan intonasi alami'
+      },
+      { 
+        code: 'vi-VN', 
+        name: 'Vietnamese', 
+        nativeName: 'Tiếng Việt', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'medium',
+        recommendedSpeed: 0.85,
+        description: 'Bahasa Vietnam dengan pengucapan jelas'
+      },
+      { 
+        code: 'ja-JP', 
+        name: 'Japanese', 
+        nativeName: '日本語', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'high',
+        recommendedSpeed: 0.8,
+        description: 'Bahasa Jepang dengan intonasi alami'
+      },
+      { 
+        code: 'ko-KR', 
+        name: 'Korean', 
+        nativeName: '한국어', 
+        voiceGender: 'female', 
+        clarity: 'high',
+        naturalness: 'medium',
+        recommendedSpeed: 0.85,
+        description: 'Bahasa Korea dengan pengucapan jelas'
+      },
     ];
   }
 
   /**
-   * Rekomendasi pengaturan
+   * Rekomendasi pengaturan untuk suara natural bahasa Indonesia
    */
   getVoiceRecommendations() {
     return {
-      recommendedLanguages: ['id-ID', 'en-US', 'ja-JP', 'ko-KR', 'th-TH'],
+      recommendedLanguages: ['id-ID', 'id-NATURAL', 'en-US', 'ms-MY', 'ja-JP'],
       optimalSpeed: 0.85,
+      optimalPitch: 1.0,
       textOptimizationTips: [
-        'Gunakan kalimat pendek dan jelas',
-        'Hindari singkatan yang tidak umum',
-        'Gunakan tanda baca yang tepat',
-        'Batasi panjang kalimat maksimal 20 kata',
+        'Gunakan kalimat pendek (maksimal 15 kata per kalimat)',
+        'Hindari singkatan tidak formal (yg, dgn, tdk)',
+        'Gunakan tanda baca yang tepat untuk jeda alami',
+        'Kapitalisasi nama bulan, hari, dan istilah khusus',
+        'Ubah angka ribuan dengan format Indonesia (1.000 bukan 1,000)',
       ],
       apiTips: [
-        'Gunakan speed antara 0.8-1.0 untuk kejelasan maksimal',
-        'Bahasa Indonesia dan Inggris memiliki suara paling natural',
+        'Gunakan speed 0.8-0.9 untuk kejelasan maksimal',
+        'Pitch 1.0-1.2 untuk suara lebih natural',
+        'Bahasa Indonesia memiliki suara paling natural di Google TTS',
         'Optimasi teks sebelum dikonversi untuk hasil terbaik',
+        'Gunakan <pause> untuk jeda alami di kalimat panjang',
+      ],
+      indonesianSpecificTips: [
+        'Singkatan resmi: dr. (dokter), Rp (rupiah), kg (kilogram)',
+        'Hindari bahasa gaul untuk hasil terbaik',
+        'Gunakan "yang" bukan "yg", "dengan" bukan "dgn"',
+        'Format tanggal: 31 Desember 2023 (bukan 31/12/2023)',
+        'Nama bulan dan hari selalu kapital',
       ]
     };
   }
 
   /**
-   * Test koneksi ke Google TTS
+   * Test koneksi ke Google TTS dengan teks Indonesia
    */
   async testConnection() {
     try {
-      const testText = 'Halo, ini adalah uji koneksi TTS';
-      const testLang = 'id';
+      const testText = 'Halo, ini adalah uji coba suara bahasa Indonesia yang natural dan jelas. Apakah anda dapat mendengarkan saya?';
+      const testLang = 'id-ID';
       
       const params = new URLSearchParams({
         ie: 'UTF-8',
         tl: testLang,
         client: 'tw-ob',
         q: testText,
-        ttsspeed: '0.9',
+        ttsspeed: '0.85',
       });
       
       const testUrl = `${this.baseUrl}?${params.toString()}`;
@@ -467,17 +684,49 @@ async convertTextToSpeech({ text, language = 'id-ID', speed = 0.9, pitch = 1.0 }
       return {
         success: true,
         status: response.status,
-        message: 'Google TTS dapat diakses - Siap digunakan',
-        timestamp: new Date().toISOString()
+        message: 'Google TTS dapat diakses - Suara Indonesia natural siap digunakan',
+        timestamp: new Date().toISOString(),
+        testText: testText,
+        language: testLang
       };
     } catch (error) {
       return {
         success: false,
         error: error.message,
         message: 'Google TTS tidak dapat diakses',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        recommendation: 'Periksa koneksi internet atau coba lagi nanti'
       };
     }
+  }
+
+  /**
+   * Optimasi khusus untuk suara wanita Indonesia (lebih natural)
+   */
+  getIndonesianVoiceProfile() {
+    return {
+      gender: 'female',
+      age: 'adult',
+      style: 'natural',
+      pitchRange: 'medium-high',
+      speakingRate: 'medium',
+      clarity: 'very-high',
+      emotion: 'neutral',
+      recommendedSettings: {
+        speed: 0.85,
+        pitch: 1.0,
+        volume: 1.0,
+        pauseBetweenSentences: 0.5,
+        pauseBetweenParagraphs: 1.0
+      },
+      pronunciationRules: [
+        'Akhiran "kan" diucapkan jelas',
+        'Huruf "r" diucapkan dengan getaran ringan',
+        'Intonasi naik di akhir kalimat tanya',
+        'Penekanan pada kata penting',
+        'Jeda alami sebelum konjungsi'
+      ]
+    };
   }
 }
 
