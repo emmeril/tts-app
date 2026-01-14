@@ -347,22 +347,6 @@ function ttsApp() {
                 }
             });
             
-            this.socket.on('tts-audio-broadcast', (data) => {
-                console.log('Menerima broadcast audio:', data);
-                
-                // PERBAIKAN: Pastikan ini broadcast yang valid
-                if (data.broadcast) {
-                    this.currentAudio = data;
-                    this.saveAudioState();
-                    this.showNotification(`Broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
-                    
-                    // Auto-play broadcast untuk semua client
-                    setTimeout(() => {
-                        this.playAudio();
-                    }, 300);
-                }
-            });
-            
             this.socket.on('tts-complete', (data) => {
                 this.isLoading = false;
                 
@@ -621,29 +605,6 @@ function ttsApp() {
                 this.showNotification(`Gagal mengirim: ${error.message}`, 'error');
                 console.error('TTS Error:', error);
             }
-        },
-        
-        // Convert and broadcast to all clients (master only)
-        convertAndBroadcast() {
-            if (!this.isMaster) {
-                this.showNotification('Hanya Master yang dapat melakukan broadcast', 'error');
-                return;
-            }
-            
-            if (!this.text.trim()) {
-                this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
-                return;
-            }
-            
-            this.socket.emit('tts-broadcast', {
-                text: this.text,
-                language: this.language,
-                speed: this.speed,
-                timestamp: new Date().toISOString(),
-                broadcast: true
-            });
-            
-            this.showNotification('Mengirim broadcast ke semua komputer...', 'info');
         },
         
         // Play audio - PERBAIKAN UTAMA

@@ -323,47 +323,6 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle broadcast TTS (to all clients)
-  socket.on('tts-broadcast', async (data) => {
-    const client = connectedClients.get(socket.id);
-    
-    // Only master can broadcast
-    if (socket.id !== masterClient) {
-      socket.emit('broadcast-denied', {
-        success: false,
-        error: 'Hanya Master Controller yang dapat melakukan broadcast'
-      });
-      return;
-    }
-    
-    const { text, language = 'id-ID', speed = 1.0 } = data;
-    
-    try {
-      const result = await googleTTSService.convertTextToSpeech({
-        text: text,
-        language: language,
-        speed: speed
-      });
-      
-      // Send audio to ALL clients with broadcast flag
-      io.emit('tts-audio-broadcast', {
-        ...result,
-        fromClientId: client.id,
-        broadcast: true,
-        timestamp: new Date().toISOString()
-      });
-      
-      console.log(`[${new Date().toISOString()}] Broadcast TTS from ${client.id} to all clients`);
-      
-    } catch (error) {
-      console.error('Broadcast TTS Error:', error.message);
-      socket.emit('tts-error', {
-        success: false,
-        error: 'Gagal melakukan broadcast TTS'
-      });
-    }
-  });
-  
   // Handle client requesting to play audio (master only)
   socket.on('play-audio', (audioData) => {
     if (socket.id === masterClient) {
@@ -607,7 +566,7 @@ app.get('/api/languages', (req, res) => {
 
 app.post('/api/tts', async (req, res) => {
     try {
-        const { text, language = 'id-ID', speed = 1.0, broadcast = false } = req.body;
+        const { text, language = 'id-ID', speed = 1.0 } = req.body;
         
         console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
         
@@ -642,14 +601,8 @@ app.post('/api/tts', async (req, res) => {
             speed: validSpeed
         });
         
-        if (broadcast && masterClient) {
-            io.emit('tts-audio-broadcast', {
-                ...result,
-                fromClientId: 'api-request',
-                broadcast: true,
-                timestamp: new Date().toISOString()
-            });
-        } else if (masterClient) {
+        // Hanya kirim ke master jika ada master yang terhubung
+        if (masterClient) {
             io.to(masterClient).emit('tts-audio', {
                 ...result,
                 fromClientId: 'api-request',
@@ -657,14 +610,20 @@ app.post('/api/tts', async (req, res) => {
                 priority: 'high',
                 forMasterOnly: true
             });
+            
+            res.json({
+                ...result,
+                masterClient: connectedClients.get(masterClient)?.id,
+                clientCount: connectedClients.size
+            });
+        } else {
+            res.json({
+                success: false,
+                error: 'Tidak ada Master Controller yang terhubung',
+                result: result,
+                clientCount: connectedClients.size
+            });
         }
-        
-        res.json({
-            ...result,
-            broadcasted: broadcast,
-            masterClient: masterClient ? connectedClients.get(masterClient)?.id : null,
-            clientCount: connectedClients.size
-        });
         
     } catch (error) {
         console.error('API TTS Error:', error.message);
@@ -784,9 +743,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   GET  ${serverUrl}/api/languages   - Daftar bahasa yang didukung`);
   console.log(`   POST ${serverUrl}/api/clear-queue - Hapus antrian TTS`);
   console.log(`\n🌐 Frontend tersedia di: ${serverUrl}`);
-  console.log(`\n🔧 Fitur Baru: Master Auto-Reconnect`);
+  console.log(`\n🔧 Fitur: Master-Client TTS`);
+  console.log(`   • Hanya master yang dapat memutar audio`);
+  console.log(`   • Client biasa mengirim audio ke master`);
   console.log(`   • Master preference disimpan di localStorage`);
   console.log(`   • Auto-reconnect saat browser di-refresh`);
-  console.log(`   • Otomatis request master role saat tersedia`);
   console.log(`\n========================================\n`);
 });
