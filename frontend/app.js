@@ -63,12 +63,18 @@ function ttsApp() {
                 this.socket.disconnect();
             }
             
+            // Get current URL for socket connection
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname;
+            const port = window.location.port ? `:${window.location.port}` : '';
+            
             // Create new connection
-            this.socket = io({
+            this.socket = io(`${protocol}//${host}${port}`, {
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
-                timeout: 20000
+                timeout: 20000,
+                transports: ['websocket', 'polling']
             });
             
             // Socket event listeners
@@ -82,7 +88,8 @@ function ttsApp() {
                     userAgent: navigator.userAgent,
                     platform: navigator.platform,
                     screen: `${window.screen.width}x${window.screen.height}`,
-                    url: window.location.href
+                    url: window.location.href,
+                    timestamp: new Date().toISOString()
                 });
             });
             
@@ -241,7 +248,6 @@ function ttsApp() {
             });
             
             this.socket.on('pong', (data) => {
-                // Update last activity
                 console.log('Pong received:', data);
             });
             
@@ -256,6 +262,7 @@ function ttsApp() {
                 this.serverStatus = 'error';
                 this.serverStatusText = 'Gagal menyambung ke server';
                 console.error('Connection error:', error);
+                this.showNotification('Gagal menyambung ke server', 'error');
             });
             
             this.socket.on('error', (error) => {
@@ -287,44 +294,44 @@ function ttsApp() {
         },
         
         // Convert text to speech and send to master
-      async convertToSpeech() {
-    if (!this.text || !this.text.trim()) {
-        this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
-        return;
-    }
-    
-    // Validasi panjang teks (5000 karakter maksimal)
-    if (this.text.length > 5000) {
-        this.showNotification(`Teks terlalu panjang. Maksimal 5000 karakter. Saat ini: ${this.text.length}`, 'error');
-        return;
-    }
-    
-    // Validasi jika teks hanya whitespace
-    if (this.text.trim().length === 0) {
-        this.showNotification('Teks tidak boleh hanya spasi atau karakter kosong', 'error');
-        return;
-    }
-    
-    this.isLoading = true;
-    
-    try {
-        // Send TTS request via Socket.io
-        this.socket.emit('tts-request', {
-            text: this.text.trim(), // Trim whitespace
-            language: this.language,
-            speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
-            priority: this.priority,
-            timestamp: new Date().toISOString()
-        });
-        
-        this.showNotification('Mengirim permintaan TTS...', 'info');
-        
-    } catch (error) {
-        this.isLoading = false;
-        this.showNotification(`Gagal mengirim: ${error.message}`, 'error');
-        console.error('TTS Error:', error);
-    }
-},
+        async convertToSpeech() {
+            if (!this.text || !this.text.trim()) {
+                this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
+                return;
+            }
+            
+            // Validasi panjang teks (5000 karakter maksimal)
+            if (this.text.length > 5000) {
+                this.showNotification(`Teks terlalu panjang. Maksimal 5000 karakter. Saat ini: ${this.text.length}`, 'error');
+                return;
+            }
+            
+            // Validasi jika teks hanya whitespace
+            if (this.text.trim().length === 0) {
+                this.showNotification('Teks tidak boleh hanya spasi atau karakter kosong', 'error');
+                return;
+            }
+            
+            this.isLoading = true;
+            
+            try {
+                // Send TTS request via Socket.io
+                this.socket.emit('tts-request', {
+                    text: this.text.trim(), // Trim whitespace
+                    language: this.language,
+                    speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
+                    priority: this.priority,
+                    timestamp: new Date().toISOString()
+                });
+                
+                this.showNotification('Mengirim permintaan TTS...', 'info');
+                
+            } catch (error) {
+                this.isLoading = false;
+                this.showNotification(`Gagal mengirim: ${error.message}`, 'error');
+                console.error('TTS Error:', error);
+            }
+        },
         
         // Convert and broadcast to all clients (master only)
         convertAndBroadcast() {
@@ -511,23 +518,23 @@ function ttsApp() {
         },
         
         // Helper methods
-     updateCharCount() {
-    if (!this.text) {
-        this.charCount = 0;
-        this.wordCount = 0;
-        return;
-    }
-    
-    // Hitung karakter (termasuk spasi)
-    this.charCount = this.text.length;
-    
-    // Hitung kata (hanya karakter non-whitespace)
-    const trimmed = this.text.trim();
-    this.wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
-    
-    // Log untuk debugging
-    console.log(`Char count: ${this.charCount}, Word count: ${this.wordCount}, Text: "${this.text.substring(0, 50)}"`);
-},
+        updateCharCount() {
+            if (!this.text) {
+                this.charCount = 0;
+                this.wordCount = 0;
+                return;
+            }
+            
+            // Hitung karakter (termasuk spasi)
+            this.charCount = this.text.length;
+            
+            // Hitung kata (hanya karakter non-whitespace)
+            const trimmed = this.text.trim();
+            this.wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
+            
+            // Log untuk debugging
+            console.log(`Char count: ${this.charCount}, Word count: ${this.wordCount}, Text: "${this.text.substring(0, 50)}"`);
+        },
         
         clearText() {
             this.text = '';
@@ -650,10 +657,21 @@ function ttsApp() {
         
         async loadLanguages() {
             try {
-                const response = await fetch('/api/languages');
+                // Get current host for API request
+                const host = window.location.hostname;
+                const port = window.location.port ? `:${window.location.port}` : '';
+                const protocol = window.location.protocol;
+                
+                const response = await fetch(`${protocol}//${host}${port}/api/languages`);
                 const data = await response.json();
                 if (data.success) {
                     this.languages = data.languages;
+                } else {
+                    // Fallback to default languages
+                    this.languages = [
+                        { code: 'id-ID', name: 'Bahasa Indonesia', nativeName: 'Bahasa Indonesia' },
+                        { code: 'en-US', name: 'English (US)', nativeName: 'English' }
+                    ];
                 }
             } catch (error) {
                 console.error('Failed to load languages:', error);
@@ -667,7 +685,11 @@ function ttsApp() {
         
         async testConnection() {
             try {
-                const response = await fetch('/api/test');
+                const host = window.location.hostname;
+                const port = window.location.port ? `:${window.location.port}` : '';
+                const protocol = window.location.protocol;
+                
+                const response = await fetch(`${protocol}//${host}${port}/api/test`);
                 const data = await response.json();
                 alert(data.message || 'Koneksi berhasil diuji');
             } catch (error) {
