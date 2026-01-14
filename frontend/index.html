@@ -1,365 +1,521 @@
 <!DOCTYPE html>
 <html lang="id" x-data="ttsApp()" x-init="init()">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Panggilan Monse</title>
-        <link rel="stylesheet" href="style.css">
-        <link rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <link
-            href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap"
-            rel="stylesheet">
-        <script defer
-            src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-        <script src="app.js"></script>
-    </head>
-    <body>
-        <div class="container">
-            <!-- Header -->
-            <header class="header">
-                <div class="logo">
-                    <i class="fas fa-volume-up"></i>
-                    <h1>Aplikasi Panggilan Monse</h1>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panggilan Monse System</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-volume-up"></i>
+                <div>
+                    <h1>Panggilan Monse System</h1>
+                    <p class="subtitle">Output audio terpusat dari satu komputer</p>
                 </div>
+            </div>
+            <div class="header-controls">
                 <div class="server-status" :class="serverStatus">
-                    <i class="fas fa-server"></i>
+                    <i class="fas" :class="{
+                        'fa-wifi': serverStatus === 'connected',
+                        'fa-wifi-slash': serverStatus === 'disconnected',
+                        'fa-exclamation-triangle': serverStatus === 'error'
+                    }"></i>
                     <span x-text="serverStatusText"></span>
                 </div>
-            </header>
+                <div class="client-id" x-show="clientId">
+                    <i class="fas fa-id-card"></i>
+                    <span>ID: <span x-text="clientIdShort"></span></span>
+                </div>
+            </div>
+        </header>
 
-            <main class="main-content">
-                <!-- Input Section -->
-                <section class="card input-section">
-                    <div class="card-header">
-                        <h2><i class="fas fa-keyboard"></i> Masukkan Teks</h2>
-                        <div class="char-count">
-                            <span x-text="charCount"></span>/<span
-                                x-text="maxChars"></span> karakter
-                            <span x-show="wordCount > 0">• <span
-                                    x-text="wordCount"></span> kata</span>
+        <!-- Master Control Panel -->
+        <section class="master-control-panel" x-show="clientId">
+            <div class="panel-header">
+                <h3><i class="fas fa-crown"></i> Kontrol Master</h3>
+                <div class="client-count">
+                    <i class="fas fa-users"></i>
+                    <span x-text="connectedClients.length"></span> komputer terhubung
+                </div>
+            </div>
+            
+            <div class="panel-body">
+                <div x-show="!isMaster" class="master-request">
+                    <div class="master-info">
+                        <i class="fas fa-info-circle"></i>
+                        <p>Status: <strong>Client Biasa</strong> - Anda dapat mengirim teks, tetapi hanya Master yang memutar audio.</p>
+                    </div>
+                    <button @click="requestMasterRole()" 
+                            :disabled="isRequestingMaster || isMaster" 
+                            class="btn btn-success btn-master">
+                        <i class="fas fa-crown"></i>
+                        <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
+                    </button>
+                    <p class="hint">* Master akan menerima dan memutar audio dari semua komputer</p>
+                </div>
+                
+                <div x-show="isMaster" class="master-active">
+                    <div class="master-badge">
+                        <i class="fas fa-crown"></i>
+                        <div>
+                            <h4>Anda adalah Master Controller</h4>
+                            <p>Audio akan diputar di komputer ini. Semua komputer lain mengirim teks ke Anda.</p>
                         </div>
                     </div>
-                    <div class="card-body">
-                        <textarea
-                            x-model="text"
-                            @input="updateCharCount()"
-                            placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara di sini..."
-                            rows="5"
-                            :maxlength="maxChars"
-                            :class="{'has-error': charCount >= maxChars}"
-                            class="text-input"></textarea>
-
-                        <div class="text-actions">
-                            <button @click="clearText()"
-                                class="btn btn-outline">
-                                <i class="fas fa-trash-alt"></i> Hapus
-                            </button>
-                            <button @click="pasteText()"
-                                class="btn btn-outline">
-                                <i class="fas fa-paste"></i> Tempel
-                            </button>
-                            <!-- <button @click="speakText()" class="btn btn-outline" :disabled="!text">
-                            <i class="fas fa-play"></i> Dengarkan
-                        </button> -->
-                            <button @click="convertToSpeech()"
-                                :disabled="isLoading || !text"
-                                class="btn btn-primary btn-convert">
-                                <i class="fas"
-                                    :class="isLoading ? 'fa-spinner fa-spin' : 'fa-magic'"></i>
-                                <span
-                                    x-text="isLoading ? 'Memproses...' : 'Konversi ke Suara'"></span>
-                            </button>
-                            <!-- <button @click="stopSpeech()"
-                                :disabled="!isPlaying"
+                    <div class="master-controls">
+                        <button @click="playAudio()" 
+                                :disabled="!currentAudio || isPlaying" 
+                                class="btn btn-primary">
+                            <i class="fas fa-play"></i> Putar Audio
+                        </button>
+                        <button @click="pauseAudio()" 
+                                :disabled="!isPlaying" 
+                                class="btn btn-warning">
+                            <i class="fas fa-pause"></i> Jeda
+                        </button>
+                        <button @click="stopAudio()" 
+                                :disabled="!currentAudio" 
                                 class="btn btn-secondary">
-                                <i class="fas fa-stop"></i> Hentikan
-                            </button> -->
-                           
+                            <i class="fas fa-stop"></i> Stop
+                        </button>
+                        <button @click="releaseMasterRole()" 
+                                class="btn btn-outline">
+                            <i class="fas fa-sign-out-alt"></i> Lepaskan Peran Master
+                        </button>
+                    </div>
+                    <div class="master-stats" x-show="currentAudio">
+                        <div class="stat">
+                            <i class="fas fa-clock"></i>
+                            <span>Durasi: <strong x-text="currentAudio?.duration + ' detik'"></strong></span>
+                        </div>
+                        <div class="stat">
+                            <i class="fas fa-microphone"></i>
+                            <span>Dari: <strong x-text="currentAudio?.fromClientId || 'Unknown'"></strong></span>
                         </div>
                     </div>
-                </section>
+                </div>
+            </div>
+        </section>
 
-                <!-- Settings Section -->
-                <section class="card settings-section">
-                    <div class="card-header">
-                        <h2><i class="fas fa-sliders-h"></i> Pengaturan
-                            Suara</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="settings-grid">
-                            <div class="setting">
-                                <label for="language">
-                                    <i class="fas fa-language"></i> Bahasa
-                                </label>
-                                <select id="language" x-model="language"
-                                    class="select-input">
-                                    <template x-for="lang in languages"
-                                        :key="lang.code">
-                                        <option :value="lang.code"
-                                            x-text="`${lang.name} (${lang.nativeName})`"></option>
-                                    </template>
-                                </select>
+        <!-- Connected Clients -->
+        <section x-show="connectedClients.length > 1" class="card clients-section">
+            <div class="card-header">
+                <h3><i class="fas fa-network-wired"></i> Komputer Terhubung</h3>
+                <span class="badge" x-text="connectedClients.length"></span>
+            </div>
+            <div class="card-body">
+                <div class="clients-grid">
+                    <template x-for="client in connectedClients" :key="client.id">
+                        <div class="client-card" :class="{ 'master': client.isMaster }">
+                            <div class="client-avatar" :class="{ 'master': client.isMaster }">
+                                <i class="fas" :class="client.isMaster ? 'fa-crown' : 'fa-desktop'"></i>
                             </div>
-
-                            <div class="setting">
-                                <label for="speed">
-                                    <i class="fas fa-tachometer-alt"></i>
-                                    Kecepatan
-                                    <span class="speed-value"
-                                        x-text="`${speed}x`"></span>
-                                </label>
-                                <div class="slider-container">
-                                    <input type="range" id="speed"
-                                        x-model="speed" min="0.5" max="2"
-                                        step="0.1" class="slider">
-                                    <div class="slider-labels">
-                                        <span>Lambat</span>
-                                        <span>Normal</span>
-                                        <span>Cepat</span>
-                                    </div>
-                                </div>
+                            <div class="client-info">
+                                <h4 x-text="client.id.substring(0, 12)"></h4>
+                                <p :class="{ 'master': client.isMaster }" 
+                                   x-text="client.isMaster ? 'Master Controller' : 'Client'"></p>
+                                <small x-text="formatTime(client.joinedAt)"></small>
+                            </div>
+                            <div class="client-status" :class="{ 'online': true, 'master': client.isMaster }">
+                                <i class="fas fa-circle"></i>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </template>
+                </div>
+            </div>
+        </section>
 
-                <!-- Action Section -->
-                <!-- <section class="action-section">
-                <button @click="convertToSpeech()" :disabled="isLoading || !text" class="btn btn-primary btn-convert">
-                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-magic'"></i>
-                    <span x-text="isLoading ? 'Memproses...' : 'Konversi ke Suara'"></span>
+        <main class="main-content">
+            <!-- Input Section -->
+            <section class="card input-section">
+                <div class="card-header">
+                    <h2><i class="fas fa-keyboard"></i> Input Teks</h2>
+                    <div class="char-count">
+                        <span x-text="charCount"></span>/<span x-text="maxChars"></span> karakter
+                        <span x-show="wordCount > 0">• <span x-text="wordCount"></span> kata</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <textarea x-model="text"
+                              @input="updateCharCount()"
+                              placeholder="Ketik atau tempel teks yang ingin diubah menjadi suara... (Audio akan diputar di komputer Master)"
+                              rows="4"
+                              :maxlength="maxChars"
+                              :class="{'has-error': charCount >= maxChars}"
+                              class="text-input"></textarea>
+
+                    <div class="text-actions">
+                        <button @click="clearText()" class="btn btn-outline">
+                            <i class="fas fa-trash-alt"></i> Hapus
+                        </button>
+                        <button @click="pasteText()" class="btn btn-outline">
+                            <i class="fas fa-paste"></i> Tempel
+                        </button>
+                        <!-- <button @click="loadExample()" class="btn btn-outline">
+                            <i class="fas fa-lightbulb"></i> Contoh
+                        </button> -->
+                                   <button @click="convertToSpeech()" 
+                        :disabled="isLoading || !text || isMaster && !isMasterReady"
+                        class="btn btn-primary btn-convert">
+                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                    <span x-text="getConvertButtonText()"></span>
                 </button>
                 
-                <button @click="stopSpeech()" :disabled="!isPlaying" class="btn btn-secondary">
-                    <i class="fas fa-stop"></i> Hentikan
+                <button @click="convertAndBroadcast()" 
+                        :disabled="isLoading || !text || !isMaster"
+                        x-show="isMaster"
+                        class="btn btn-success">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Kirim ke Semua</span>
+                </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Section -->
+            <section class="card settings-section">
+                <div class="card-header">
+                    <h2><i class="fas fa-sliders-h"></i> Pengaturan</h2>
+                </div>
+                <div class="card-body">
+                    <div class="settings-grid">
+                        <div class="setting">
+                            <label for="language">
+                                <i class="fas fa-language"></i> Bahasa
+                            </label>
+                            <select id="language" x-model="language" class="select-input">
+                                <option value="" disabled>Pilih bahasa...</option>
+                                <template x-for="lang in languages" :key="lang.code">
+                                    <option :value="lang.code" x-text="`${lang.name} (${lang.nativeName})`"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <div class="setting">
+                            <label for="speed">
+                                <i class="fas fa-tachometer-alt"></i> Kecepatan
+                                <span class="speed-value" x-text="`${speed}x`"></span>
+                            </label>
+                            <div class="slider-container">
+                                <input type="range" id="speed" x-model="speed" 
+                                       min="0.5" max="2" step="0.1" class="slider">
+                                <div class="slider-labels">
+                                    <span>Lambat (0.5x)</span>
+                                    <span>Normal (1.0x)</span>
+                                    <span>Cepat (2.0x)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="setting">
+                            <label for="priority">
+                                <i class="fas fa-flag"></i> Prioritas
+                            </label>
+                            <select id="priority" x-model="priority" class="select-input">
+                                <option value="low">Rendah</option>
+                                <option value="normal">Normal</option>
+                                <option value="high">Tinggi</option>
+                                <option value="urgent">Sangat Penting</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Action Section -->
+            <!-- <section class="action-section">
+                <button @click="convertToSpeech()" 
+                        :disabled="isLoading || !text || isMaster && !isMasterReady"
+                        class="btn btn-primary btn-convert">
+                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                    <span x-text="getConvertButtonText()"></span>
+                </button>
+                
+                <button @click="convertAndBroadcast()" 
+                        :disabled="isLoading || !text || !isMaster"
+                        x-show="isMaster"
+                        class="btn btn-success">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Kirim ke Semua</span>
                 </button>
             </section> -->
 
-                <!-- Result Section -->
-                <section x-show="result" class="card result-section">
-                    <div class="card-header">
-                        <h2><i class="fas fa-music"></i> Hasil Konversi</h2>
-                        <div class="result-info">
-                            <span class="badge" :class="result.source">
-                                <i class="fas"
-                                    :class="result.source === 'google-tts' ? 'fa-google' : 'fa-globe'"></i>
-                                <span
-                                    x-text="result.source === 'google-tts' ? 'Google TTS' : 'Browser'"></span>
-                            </span>
-                        </div>
+            <!-- Audio Player Section (Master Only) -->
+            <section x-show="isMaster && currentAudio" class="card audio-section">
+                <div class="card-header">
+                    <h3><i class="fas fa-music"></i> Pemutar Audio (Master)</h3>
+                    <div class="audio-source" x-show="currentAudio?.fromClientId">
+                        <i class="fas fa-user"></i>
+                        <span>Dari: <strong x-text="currentAudio?.fromClientId"></strong></span>
                     </div>
-                    <div class="card-body">
-                        <div class="result-meta">
-                            <div class="meta-item">
+                </div>
+                <div class="card-body">
+                    <div class="audio-player">
+                        <audio id="masterAudioPlayer" 
+                               :src="currentAudio?.audioUrl" 
+                               controls
+                               @play="onAudioPlay()"
+                               @pause="onAudioPause()"
+                               @ended="onAudioEnd()"
+                               class="audio-element"></audio>
+                        
+                        <div class="audio-info">
+                            <div class="info-item">
                                 <i class="fas fa-clock"></i>
-                                <span>Durasi: <strong
-                                        x-text="`${result.duration} detik`"></strong></span>
+                                <span>Durasi: <strong x-text="currentAudio?.duration + ' detik'"></strong></span>
                             </div>
-                            <div class="meta-item">
-                                <i class="fas fa-text-height"></i>
-                                <span>Karakter: <strong
-                                        x-text="result.textLength"></strong></span>
-                            </div>
-                            <div class="meta-item">
+                            <div class="info-item">
                                 <i class="fas fa-language"></i>
-                                <span>Bahasa: <strong
-                                        x-text="getLanguageName(result.language)"></strong></span>
+                                <span>Bahasa: <strong x-text="getLanguageName(currentAudio?.language)"></strong></span>
                             </div>
-                            <div class="meta-item" x-show="result.truncated">
-                                <i class="fas fa-exclamation-triangle"></i>
-                                <span>Teks dipotong (maks 200 karakter)</span>
-                            </div>
-                        </div>
-
-                        <div class="audio-player">
-                            <audio
-                                :src="result.audioUrl"
-                                controls
-                                @play="isPlaying = true"
-                                @pause="isPlaying = false"
-                                @ended="isPlaying = false"
-                                class="audio-element"></audio>
-
-                            <div class="audio-actions">
-                                <button @click="playAudio()"
-                                    :disabled="!result || isPlaying"
-                                    class="btn btn-audio">
-                                    <i class="fas fa-play"></i> Putar
-                                </button>
-                                <button @click="pauseAudio()"
-                                    :disabled="!isPlaying"
-                                    class="btn btn-audio">
-                                    <i class="fas fa-pause"></i> Jeda
-                                </button>
-                                <button @click="downloadAudio()"
-                                    :disabled="!result" class="btn btn-audio">
-                                    <i class="fas fa-download"></i> Unduh
-                                </button>
-                                <button @click="shareAudio()"
-                                    :disabled="!result" class="btn btn-audio">
-                                    <i class="fas fa-share-alt"></i> Bagikan
-                                </button>
+                            <div class="info-item">
+                                <i class="fas fa-text-height"></i>
+                                <span>Karakter: <strong x-text="currentAudio?.textLength"></strong></span>
                             </div>
                         </div>
-                    </div>
-                </section>
-
-                <!-- Error Section -->
-                <section x-show="error" class="error-section">
-                    <div class="error-message">
-                        <i class="fas fa-exclamation-circle"></i>
-                        <div class="error-content">
-                            <h3>Terjadi Kesalahan</h3>
-                            <p x-text="error"></p>
-                            <button @click="error = ''" class="btn btn-error">
-                                <i class="fas fa-times"></i> Tutup
+                        
+                        <div class="audio-actions">
+                            <button @click="downloadAudio()" class="btn btn-outline">
+                                <i class="fas fa-download"></i> Unduh
+                            </button>
+                            <button @click="shareAudio()" class="btn btn-outline">
+                                <i class="fas fa-share-alt"></i> Bagikan
+                            </button>
+                            <button @click="clearAudio()" class="btn btn-outline">
+                                <i class="fas fa-times"></i> Hapus
                             </button>
                         </div>
                     </div>
-                </section>
+                </div>
+            </section>
 
-                <!-- History Section -->
-                <section x-show="history.length > 0"
-                    class="card history-section">
-                    <div class="card-header">
-                        <h2><i class="fas fa-history"></i> Riwayat Konversi</h2>
-                        <button @click="clearHistory()" class="btn btn-small">
-                            <i class="fas fa-trash"></i> Hapus Semua
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div class="history-list">
-                            <template
-                                x-for="(item, index) in history.slice().reverse()"
-                                :key="item.id">
-                                <div class="history-item">
-                                    <div class="history-text"
-                                        x-text="truncateText(item.text, 60)"></div>
+            <!-- Notification Section -->
+            <section x-show="notifications.length > 0" class="notifications-section">
+                <div class="notifications-container">
+                    <template x-for="notification in notifications.slice().reverse().slice(0, 3)" :key="notification.id">
+                        <div class="notification" :class="notification.type" @click="removeNotification(notification.id)">
+                            <i class="fas" :class="getNotificationIcon(notification.type)"></i>
+                            <div class="notification-content">
+                                <p x-text="notification.message"></p>
+                                <small x-text="formatTime(notification.timestamp)"></small>
+                            </div>
+                            <button @click="removeNotification(notification.id)" class="btn-close">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- History Section -->
+            <section x-show="history.length > 0" class="card history-section">
+                <div class="card-header">
+                    <h3><i class="fas fa-history"></i> Riwayat Pengiriman</h3>
+                    <button @click="clearHistory()" class="btn btn-small">
+                        <i class="fas fa-trash"></i> Hapus Semua
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="history-list">
+                        <template x-for="(item, index) in history.slice().reverse()" :key="item.id">
+                            <div class="history-item" :class="{ 'success': item.success, 'error': !item.success }">
+                                <div class="history-content">
+                                    <div class="history-text" x-text="truncateText(item.text, 80)"></div>
                                     <div class="history-meta">
-                                        <span><i class="fas fa-language"></i>
-                                            <span
-                                                x-text="getLanguageCode(item.language)"></span></span>
-                                        <span><i class="fas fa-clock"></i> <span
-                                                x-text="formatTime(item.timestamp)"></span></span>
-                                        <button @click="loadHistoryItem(item)"
-                                            class="btn btn-small">
-                                            <i class="fas fa-redo"></i> Gunakan
-                                        </button>
+                                        <span><i class="fas fa-language"></i> <span x-text="getLanguageCode(item.language)"></span></span>
+                                        <span><i class="fas fa-clock"></i> <span x-text="formatTime(item.timestamp)"></span></span>
+                                        <span><i class="fas" :class="item.success ? 'fa-check-circle' : 'fa-times-circle'"></i></span>
                                     </div>
                                 </div>
-                            </template>
+                                <div class="history-actions">
+                                    <button @click="loadHistoryItem(item)" class="btn btn-small">
+                                        <i class="fas fa-redo"></i> Gunakan Lagi
+                                    </button>
+                                    <button @click="removeHistoryItem(item.id)" class="btn btn-small btn-outline">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </section>
+
+            <!-- System Status -->
+            <section class="card status-section">
+                <div class="card-header">
+                    <h3><i class="fas fa-chart-line"></i> Status Sistem</h3>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <i class="fas fa-server"></i>
+                            <div>
+                                <h4>Server</h4>
+                                <p x-text="serverStatus === 'connected' ? 'Aktif' : 'Tidak Aktif'"></p>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-users"></i>
+                            <div>
+                                <h4>Klien Terhubung</h4>
+                                <p x-text="connectedClients.length"></p>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-crown"></i>
+                            <div>
+                                <h4>Master</h4>
+                                <p x-text="isMaster ? 'Anda' : masterClientId || 'Tidak Ada'"></p>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-history"></i>
+                            <div>
+                                <h4>Riwayat</h4>
+                                <p x-text="history.length + ' item'"></p>
+                            </div>
                         </div>
                     </div>
-                </section>
-
-                <!-- Info Section -->
-                <!-- <section class="info-section">
-                <div class="info-cards">
-                    <div class="info-card">
-                        <i class="fas fa-info-circle"></i>
-                        <h3>Informasi</h3>
-                        <p>Menggunakan Google TTS (unofficial API). Teks maksimal 200 karakter per konversi.</p>
-                    </div>
-                    <div class="info-card">
-                        <i class="fas fa-lightbulb"></i>
-                        <h3>Tips</h3>
-                        <p>Gunakan tanda baca untuk hasil yang lebih natural. Atur kecepatan sesuai kebutuhan.</p>
-                    </div>
-                    <div class="info-card">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <h3>Batasan</h3>
-                        <p>Tidak untuk penggunaan komersial. Teks panjang akan dipotong otomatis.</p>
-                    </div>
                 </div>
-            </section> -->
-            </main>
+            </section>
+        </main>
 
-            <!-- Footer -->
-            <footer class="footer">
-                <div class="footer-content">
-                    <div class="footer-info">
-                        <p>Powered Google TTS Converter &copy; 2026 - By
-                            Hafri</p>
-                        <!-- <p class="footer-note">Ini menggunakan unofficial Google TTS API. Untuk penggunaan komersial, gunakan Google Cloud TTS resmi.</p> -->
-                    </div>
-                    <div class="footer-links">
-                        <button @click="showAbout()" class="btn-link">
-                            <i class="fas fa-info-circle"></i> Tentang
-                        </button>
-                        <button @click="showUsage()" class="btn-link">
-                            <i class="fas fa-question-circle"></i> Bantuan
-                        </button>
-                        <button @click="testConnection()" class="btn-link">
-                            <i class="fas fa-wifi"></i> Test Koneksi
-                        </button>
-                    </div>
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-info">
+                    <p>TTS Multi-Client System v2.0 &copy; 2024</p>
+                    <p class="footer-note">Sistem Text-to-Speech dengan output audio terpusat</p>
                 </div>
-            </footer>
-        </div>
-
-        <!-- About Modal -->
-        <div x-show="showAboutModal" class="modal-overlay"
-            @click.self="showAboutModal = false">
-            <div class="modal">
-                <div class="modal-header">
-                    <h3><i class="fas fa-info-circle"></i> Tentang Aplikasi</h3>
-                    <button @click="showAboutModal = false" class="btn-close">
-                        <i class="fas fa-times"></i>
+                <div class="footer-links">
+                    <button @click="showSystemInfo()" class="btn-link">
+                        <i class="fas fa-info-circle"></i> Info Sistem
                     </button>
-                </div>
-                <div class="modal-body">
-                    <p>Aplikasi ini menggunakan Google Text-to-Speech
-                        (unofficial API) untuk mengonversi teks menjadi
-                        suara.</p>
-                    <p><strong>Fitur:</strong></p>
-                    <ul>
-                        <li>Support multiple languages</li>
-                        <li>Pengaturan kecepatan suara</li>
-                        <li>Riwayat konversi</li>
-                        <li>Download audio</li>
-                        <li>Responsive design</li>
-                    </ul>
-                    <p><strong>Teknologi:</strong></p>
-                    <ul>
-                        <li>Backend: Express.js</li>
-                        <li>Frontend: Alpine.js</li>
-                        <li>TTS: Google Translate TTS API</li>
-                    </ul>
+                    <button @click="testConnection()" class="btn-link">
+                        <i class="fas fa-wifi"></i> Test Koneksi
+                    </button>
+                    <button @click="showHelp()" class="btn-link">
+                        <i class="fas fa-question-circle"></i> Bantuan
+                    </button>
                 </div>
             </div>
-        </div>
+        </footer>
+    </div>
 
-        <!-- Usage Modal -->
-        <div x-show="showUsageModal" class="modal-overlay"
-            @click.self="showUsageModal = false">
-            <div class="modal">
-                <div class="modal-header">
-                    <h3><i class="fas fa-question-circle"></i> Cara
-                        Penggunaan</h3>
-                    <button @click="showUsageModal = false" class="btn-close">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p><strong>Langkah-langkah:</strong></p>
+    <!-- Modals -->
+    <div x-show="showSystemInfoModal" class="modal-overlay" @click.self="showSystemInfoModal = false">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-info-circle"></i> Informasi Sistem</h3>
+                <button @click="showSystemInfoModal = false" class="btn-close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="system-info">
+                    <h4>TTS Multi-Client System v2.0</h4>
+                    <p>Sistem ini memungkinkan beberapa komputer mengirim teks untuk dikonversi menjadi suara, tetapi output audio hanya dari satu komputer (Master Controller).</p>
+                    
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <strong><i class="fas fa-user-crown"></i> Master Controller:</strong>
+                            <p>Komputer yang memutar audio. Hanya satu master yang aktif.</p>
+                        </div>
+                        <div class="info-item">
+                            <strong><i class="fas fa-desktop"></i> Client Biasa:</strong>
+                            <p>Komputer yang hanya mengirim teks. Tidak memutar audio.</p>
+                        </div>
+                        <div class="info-item">
+                            <strong><i class="fas fa-broadcast-tower"></i> Broadcast:</strong>
+                            <p>Master dapat mengirim audio ke semua komputer.</p>
+                        </div>
+                        <div class="info-item">
+                            <strong><i class="fas fa-history"></i> Antrian:</strong>
+                            <p>Teks dikirim saat tidak ada master akan masuk antrian.</p>
+                        </div>
+                    </div>
+                    
+                    <h5>Alur Kerja:</h5>
                     <ol>
-                        <li>Masukkan teks di kolom input (maksimal 200
-                            karakter)</li>
-                        <li>Pilih bahasa yang diinginkan</li>
-                        <li>Atur kecepatan suara (0.5x - 2.0x)</li>
-                        <li>Klik "Konversi ke Suara"</li>
-                        <li>Putar audio hasil konversi</li>
+                        <li>Klien terhubung ke server</li>
+                        <li>Satu klien menjadi Master</li>
+                        <li>Klien lain mengirim teks</li>
+                        <li>Server konversi teks ke audio</li>
+                        <li>Audio dikirim ke Master</li>
+                        <li>Master memutar audio</li>
                     </ol>
-                    <p><strong>Tips:</strong></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showHelpModal" class="modal-overlay" @click.self="showHelpModal = false">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-question-circle"></i> Panduan Penggunaan</h3>
+                <button @click="showHelpModal = false" class="btn-close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="help-content">
+                    <h4>Cara Menggunakan:</h4>
+                    
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h5>Persiapan</h5>
+                            <p>Pastikan semua komputer terhubung ke jaringan yang sama. Buka alamat server di semua browser.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h5>Menentukan Master</h5>
+                            <p>Di komputer yang memiliki speaker (output audio), klik "Jadikan Master". Komputer ini akan memutar semua audio.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h5>Mengirim Teks</h5>
+                            <p>Di komputer lain (client biasa), masukkan teks, pilih bahasa, dan klik "Kirim ke Master". Audio akan diputar di komputer Master.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">4</div>
+                        <div class="step-content">
+                            <h5>Broadcast (Opsional)</h5>
+                            <p>Master dapat mengirim audio ke semua komputer dengan klik "Kirim ke Semua".</p>
+                        </div>
+                    </div>
+                    
+                    <h5>Troubleshooting:</h5>
                     <ul>
-                        <li>Teks panjang akan dipotong otomatis</li>
-                        <li>Gunakan bahasa yang sesuai dengan teks</li>
-                        <li>Kecepatan 1.0x adalah kecepatan normal</li>
-                        <li>Riwayat tersimpan di browser Anda</li>
+                        <li><strong>Audio tidak keluar:</strong> Pastikan komputer Master memiliki speaker aktif dan volume cukup.</li>
+                        <li><strong>Tidak bisa jadi Master:</strong> Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</li>
+                        <li><strong>Koneksi terputus:</strong> Refresh halaman atau periksa jaringan.</li>
+                        <li><strong>Teks tidak terkirim:</strong> Pastikan ada Master yang aktif dan teks tidak kosong.</li>
                     </ul>
                 </div>
             </div>
         </div>
-    </body>
+    </div>
+
+    <!-- Audio Element (Hidden) -->
+    <audio id="hiddenAudio" style="display: none;"></audio>
+</body>
 </html>
