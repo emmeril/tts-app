@@ -297,12 +297,13 @@
                             </div>
                         </div>
                         
-                        <audio :src="currentAudio?.audioUrl" 
-                               controls
-                               @play="onAudioPlay()"
-                               @pause="onAudioPause()"
-                               @ended="onAudioEnd()"
-                               class="w-full rounded-lg"></audio>
+                        <audio id="masterAudioPlayer"
+       :src="currentAudio?.audioUrl" 
+       controls
+       @play="onAudioPlay()"
+       @pause="onAudioPause()"
+       @ended="onAudioEnd()"
+       class="w-full rounded-lg"></audio>
                         
                         <div class="flex items-center justify-between mt-4">
                             <div class="flex items-center space-x-4">

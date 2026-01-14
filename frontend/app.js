@@ -610,36 +610,63 @@ function ttsApp() {
         },
         
         // Play audio
-        playAudio() {
-            if (!this.currentAudio || !this.currentAudio.audioUrl) {
-                this.showNotification('Tidak ada audio untuk diputar', 'error');
-                return;
-            }
-            
-            const audioElement = this.isMaster ? 
-                document.getElementById('masterAudioPlayer') : 
-                document.getElementById('hiddenAudio');
-            
-            if (audioElement) {
+      
+playAudio() {
+    if (!this.currentAudio || !this.currentAudio.audioUrl) {
+        this.showNotification('Tidak ada audio untuk diputar', 'error');
+        return;
+    }
+    
+    // Gunakan setTimeout untuk memastikan DOM sudah di-render
+    setTimeout(() => {
+        const audioElement = this.isMaster ? 
+            document.getElementById('masterAudioPlayer') : 
+            document.getElementById('hiddenAudio');
+        
+        if (audioElement) {
+            // Jika audio element sudah punya src yang sama, reset dulu
+            if (audioElement.src === this.currentAudio.audioUrl) {
+                audioElement.currentTime = 0;
+            } else {
                 audioElement.src = this.currentAudio.audioUrl;
-                audioElement.play().then(() => {
-                    this.isPlaying = true;
-                    
-                    // Notify server about playback status
-                    this.socket.emit('audio-status', 'playing');
-                    
-                    // If this client is master, notify others to play
-                    if (this.isMaster) {
-                        this.socket.emit('play-audio', this.currentAudio);
-                    }
-                    
-                    this.showNotification('Memutar audio...', 'success');
-                }).catch(error => {
-                    console.error('Play error:', error);
-                    this.showNotification('Gagal memutar audio: ' + error.message, 'error');
-                });
             }
-        },
+            
+            audioElement.play().then(() => {
+                this.isPlaying = true;
+                
+                // Notify server about playback status
+                this.socket.emit('audio-status', 'playing');
+                
+                // If this client is master, notify others to play
+                if (this.isMaster) {
+                    this.socket.emit('play-audio', this.currentAudio);
+                }
+                
+                this.showNotification('Memutar audio...', 'success');
+            }).catch(error => {
+                console.error('Play error:', error);
+                this.showNotification('Gagal memutar audio: ' + error.message, 'error');
+                
+                // Jika gagal, coba lagi dengan hiddenAudio sebagai fallback
+                if (this.isMaster) {
+                    const hiddenAudio = document.getElementById('hiddenAudio');
+                    if (hiddenAudio) {
+                        hiddenAudio.src = this.currentAudio.audioUrl;
+                        hiddenAudio.play().catch(e => console.error('Fallback play error:', e));
+                    }
+                }
+            });
+        } else {
+            console.error('Audio element not found');
+            // Fallback untuk semua kasus ke hiddenAudio
+            const hiddenAudio = document.getElementById('hiddenAudio');
+            if (hiddenAudio) {
+                hiddenAudio.src = this.currentAudio.audioUrl;
+                hiddenAudio.play().catch(e => console.error('Fallback play error:', e));
+            }
+        }
+    }, 100); // Delay 100ms untuk pastikan DOM ready
+},
         
         // Pause audio
         pauseAudio() {
