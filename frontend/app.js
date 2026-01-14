@@ -40,15 +40,42 @@ function ttsApp() {
         showHelpModal: false,
         showMasterPreferenceModal: false,
         
+        // Audio Control
+        audioEnabled: false,
+        playRetryCount: 0,
+        maxPlayRetries: 3,
+        
         // Initialize
         init() {
-            console.log('Initializing TTS App with auto-reconnect feature');
+            console.log('=== TTS App Initializing ===');
+            console.log('Auto-play policy check:', {
+                userAgent: navigator.userAgent,
+                autoplay: 'autoplay' in document.createElement('audio')
+            });
+            
             this.updateCharCount();
             this.loadLanguages();
             this.loadHistory();
-            this.loadMasterPreference(); // Load master preference from localStorage
-            this.loadAudioState(); // Load saved audio state
+            this.loadMasterPreference();
+            this.loadAudioState();
             this.initSocket();
+            
+            // Enable audio setelah interaksi user pertama
+            document.addEventListener('click', () => {
+                this.audioEnabled = true;
+                console.log('Audio enabled by user interaction');
+            }, { once: true });
+            
+            // Prompt untuk interaksi pertama kali
+            setTimeout(() => {
+                if (this.isMaster && !this.audioEnabled) {
+                    this.showNotification(
+                        'Sebagai Master, klik di layar untuk mengaktifkan audio otomatis',
+                        'info',
+                        true
+                    );
+                }
+            }, 2000);
             
             // Auto-reconnect jika terputus
             setInterval(() => {
@@ -150,33 +177,27 @@ function ttsApp() {
                 this.masterClientId = data.masterClient;
                 this.connectedClients = data.connectedClients || [];
                 
-                // Auto-request master role jika:
-                // 1. User ingin menjadi master (wantsToBeMaster = true)
-                // 2. Belum ada master saat ini
-                // 3. User bukan master saat ini
-                // 4. Belum melebihi max reconnect attempts
+                // Auto-request master role
                 if (this.wantsToBeMaster && 
                     !this.isMaster && 
                     !data.masterClient && 
                     this.reconnectAttempts < this.maxReconnectAttempts) {
                     
-                    // Tunggu sebentar untuk memastikan socket benar-benar terhubung
                     setTimeout(() => {
                         if (this.wantsToBeMaster && !this.isMaster && !this.masterClientId) {
                             console.log('Auto-requesting master role after connection...');
                             this.reconnectAttempts++;
-                            this.requestMasterRole(true); // true untuk auto-reconnect
+                            this.requestMasterRole(true);
                         }
                     }, 1500);
                 } else if (data.masterClient && this.wantsToBeMaster && !this.isMaster) {
-                    // Sudah ada master lain
                     this.showNotification(
                         `Tidak dapat menjadi Master. Master saat ini: ${data.masterClient.substring(0, 8)}`,
                         'warning'
                     );
                 }
                 
-                // Jika sebelumnya master dan sekarang bukan master (mungkin terputus)
+                // Jika sebelumnya master dan sekarang bukan master
                 if (this.wasMasterBeforeDisconnect && !this.isMaster && data.masterClient) {
                     this.showNotification(
                         `Peran Master telah diambil oleh ${data.masterClient.substring(0, 8)}`,
@@ -208,13 +229,11 @@ function ttsApp() {
                     } else {
                         this.showNotification('Anda sekarang adalah Master Controller!', 'success');
                     }
-                    // Save that we are master
                     localStorage.setItem('ttsWasMaster', 'true');
                     this.wasMasterBeforeDisconnect = true;
                 } else if (data.masterClientId) {
                     this.showNotification(`${data.masterClientId.substring(0, 8)} sekarang menjadi Master`, 'info');
                     
-                    // Jika kita sebelumnya master dan sekarang bukan, clear flag
                     if (this.wasMasterBeforeDisconnect) {
                         this.wasMasterBeforeDisconnect = false;
                         localStorage.removeItem('ttsWasMaster');
@@ -229,9 +248,8 @@ function ttsApp() {
                 this.masterClientId = this.clientId;
                 this.wantsToBeMaster = true;
                 this.saveMasterPreference();
-                this.reconnectAttempts = 0; // Reset reconnect attempts
+                this.reconnectAttempts = 0;
                 
-                // Save that we are master
                 localStorage.setItem('ttsWasMaster', 'true');
                 this.wasMasterBeforeDisconnect = true;
                 
@@ -247,7 +265,6 @@ function ttsApp() {
                 this.isRequestingMaster = false;
                 this.showNotification(`Gagal menjadi Master: ${data.reason}`, 'error');
                 
-                // Jika ditolak karena sudah ada master, tetap simpan preferensi
                 if (this.wantsToBeMaster) {
                     this.saveMasterPreference();
                 }
@@ -258,13 +275,11 @@ function ttsApp() {
                 this.isMaster = false;
                 this.masterClientId = null;
                 
-                // Clear preference if specified
                 if (data.preferenceCleared) {
                     this.wantsToBeMaster = false;
                     this.saveMasterPreference();
                 }
                 
-                // Clear master flag
                 this.wasMasterBeforeDisconnect = false;
                 localStorage.removeItem('ttsWasMaster');
                 
@@ -275,7 +290,6 @@ function ttsApp() {
                 console.log('Master disconnected:', data);
                 this.masterClientId = null;
                 
-                // Jika master yang terputus ingin kembali menjadi master, simpan info
                 if (data.wantsToBeMaster) {
                     this.showNotification(`Master Controller terputus: ${data.disconnectedMasterId} (ingin kembali sebagai Master)`, 'warning');
                 } else {
@@ -286,7 +300,6 @@ function ttsApp() {
             this.socket.on('master-needed', (data) => {
                 if (!this.isMaster && this.wantsToBeMaster) {
                     this.showNotification(`Master diperlukan! ${data.pendingRequests} permintaan dalam antrian.`, 'warning');
-                    // Auto request jika ingin menjadi master
                     if (this.autoRequestMaster) {
                         setTimeout(() => {
                             if (!this.isMaster && !this.masterClientId) {
@@ -298,40 +311,45 @@ function ttsApp() {
             });
             
             this.socket.on('tts-audio', (data) => {
-    console.log('Received TTS audio for master:', {
-        fromClient: data.fromClientId,
-        audioUrl: data.audioUrl ? 'Present' : 'Missing',
-        textPreview: data.text ? data.text.substring(0, 50) + '...' : 'No text'
-    });
-    
-    // Store the audio data
-    this.currentAudio = data;
-    this.saveAudioState();
-    
-    // Auto-play jika client ini adalah master dan ada URL audio
-    if (this.isMaster && data.audioUrl) {
-        console.log('Master received audio, attempting to auto-play...');
-        
-        // Tunggu sebentar untuk memastikan state terupdate
-        setTimeout(() => {
-            this.playAudio();
-        }, 200);
-        
-        // Tampilkan notifikasi
-        const clientIdShort = data.fromClientId ? data.fromClientId.substring(0, 8) : 'unknown';
-        this.showNotification(`Menerima audio dari ${clientIdShort}`, 'info');
-    } else if (this.isMaster) {
-        this.showNotification(`Menerima audio tanpa URL dari ${data.fromClientId}`, 'warning');
-    }
-});
+                console.log('Master menerima TTS audio dari client:', data);
+                
+                // Store the audio data
+                this.currentAudio = data;
+                this.saveAudioState();
+                
+                // Pastikan audio memiliki URL
+                if (!data.audioUrl) {
+                    console.error('Audio URL tidak ditemukan di data:', data);
+                    this.showNotification('Error: Audio tidak valid', 'error');
+                    return;
+                }
+                
+                // Auto-play if this client is master
+                if (this.isMaster) {
+                    console.log('Master akan memutar audio dari:', data.fromClientId);
+                    
+                    // Tampilkan notifikasi
+                    this.showNotification(`Menerima audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
+                    
+                    // Tunggu sebentar untuk memastikan audio URL tersedia di DOM
+                    setTimeout(() => {
+                        this.playAudio();
+                    }, 300);
+                } else {
+                    console.log('Bukan master, hanya menyimpan audio');
+                }
+            });
             
             this.socket.on('tts-audio-broadcast', (data) => {
+                console.log('Menerima broadcast audio:', data);
                 this.currentAudio = data;
-                this.saveAudioState(); // Save audio state
-                this.showNotification(`Broadcast audio dari ${data.fromClientId}`, 'info');
+                this.saveAudioState();
+                this.showNotification(`Broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
                 
-                // Auto-play broadcast
-                this.playAudio();
+                // Auto-play broadcast untuk semua client
+                setTimeout(() => {
+                    this.playAudio();
+                }, 300);
             });
             
             this.socket.on('tts-complete', (data) => {
@@ -403,7 +421,6 @@ function ttsApp() {
             });
             
             this.socket.on('pong', (data) => {
-                // Update last activity
                 console.log('Pong received:', data);
             });
             
@@ -458,7 +475,7 @@ function ttsApp() {
                 if (saved) {
                     const preference = JSON.parse(saved);
                     this.wantsToBeMaster = preference.wantsToBeMaster || false;
-                    this.autoRequestMaster = preference.autoRequestMaster !== false; // default true
+                    this.autoRequestMaster = preference.autoRequestMaster !== false;
                     console.log('Master preference loaded:', preference);
                 }
             } catch (error) {
@@ -495,7 +512,6 @@ function ttsApp() {
                 if (saved) {
                     const audioState = JSON.parse(saved);
                     
-                    // Hanya load jika masih relevan (kurang dari 10 menit) dan client ID sama
                     const savedTime = new Date(audioState.timestamp);
                     const now = new Date();
                     const diffMinutes = (now - savedTime) / (1000 * 60);
@@ -555,7 +571,6 @@ function ttsApp() {
                 this.clearMasterPreference();
             }
             
-            // Clear master flag
             this.wasMasterBeforeDisconnect = false;
             localStorage.removeItem('ttsWasMaster');
         },
@@ -567,13 +582,11 @@ function ttsApp() {
                 return;
             }
             
-            // Validasi panjang teks (5000 karakter maksimal)
             if (this.text.length > 5000) {
                 this.showNotification(`Teks terlalu panjang. Maksimal 5000 karakter. Saat ini: ${this.text.length}`, 'error');
                 return;
             }
             
-            // Validasi jika teks hanya whitespace
             if (this.text.trim().length === 0) {
                 this.showNotification('Teks tidak boleh hanya spasi atau karakter kosong', 'error');
                 return;
@@ -582,9 +595,8 @@ function ttsApp() {
             this.isLoading = true;
             
             try {
-                // Send TTS request via Socket.io
                 this.socket.emit('tts-request', {
-                    text: this.text.trim(), // Trim whitespace
+                    text: this.text.trim(),
                     language: this.language,
                     speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
                     priority: this.priority,
@@ -623,85 +635,122 @@ function ttsApp() {
         },
         
         // Play audio
-      playAudio() {
-    if (!this.currentAudio || !this.currentAudio.audioUrl) {
-        this.showNotification('Tidak ada audio untuk diputar', 'error');
-        return;
-    }
-    
-    console.log('Attempting to play audio:', {
-        isMaster: this.isMaster,
-        audioUrl: this.currentAudio.audioUrl,
-        fromClient: this.currentAudio.fromClientId
-    });
-    
-    // Gunakan setTimeout untuk memastikan DOM siap
-    setTimeout(() => {
-        let audioElement;
-        
-        if (this.isMaster) {
-            // Master menggunakan elemen audio yang terlihat
-            audioElement = document.getElementById('masterAudioPlayer');
-            console.log('Master audio element found:', !!audioElement);
+        playAudio(retryCount = 0) {
+            console.log(`playAudio called, retry: ${retryCount}`);
+            
+            if (retryCount >= this.maxPlayRetries) {
+                console.error('Max retry attempts reached');
+                this.showNotification('Gagal memutar audio setelah beberapa percobaan', 'error');
+                return;
+            }
+            
+            if (!this.currentAudio || !this.currentAudio.audioUrl) {
+                this.showNotification('Tidak ada audio untuk diputar', 'error');
+                console.error('No audio to play');
+                return;
+            }
+            
+            let audioElement;
+            if (this.isMaster) {
+                audioElement = document.getElementById('masterAudioPlayer');
+            } else {
+                audioElement = document.getElementById('hiddenAudio');
+            }
             
             if (!audioElement) {
-                // Fallback ke hiddenAudio jika masterAudioPlayer tidak ditemukan
-                audioElement = document.getElementById('hiddenAudio');
-                console.warn('Master audio element not found, using hidden audio');
+                console.error('Audio element tidak ditemukan');
+                
+                if (this.isMaster) {
+                    let player = document.getElementById('masterAudioPlayer');
+                    if (!player) {
+                        player = document.createElement('audio');
+                        player.id = 'masterAudioPlayer';
+                        player.controls = true;
+                        player.className = 'w-full rounded-lg';
+                        document.body.appendChild(player);
+                    }
+                    audioElement = player;
+                } else {
+                    let hidden = document.getElementById('hiddenAudio');
+                    if (!hidden) {
+                        hidden = document.createElement('audio');
+                        hidden.id = 'hiddenAudio';
+                        hidden.className = 'hidden';
+                        document.body.appendChild(hidden);
+                    }
+                    audioElement = hidden;
+                }
             }
-        } else {
-            // Client biasa menggunakan hidden audio
-            audioElement = document.getElementById('hiddenAudio');
-        }
-        
-        if (audioElement) {
-            // Set audio source
-            audioElement.src = this.currentAudio.audioUrl;
             
-            // Tambahkan event listener untuk debugging
-            audioElement.onerror = (e) => {
-                console.error('Audio element error:', e);
-                this.showNotification('Error memutar audio', 'error');
+            console.log('Setting audio source:', this.currentAudio.audioUrl);
+            audioElement.src = this.currentAudio.audioUrl;
+            audioElement.load();
+            
+            audioElement.onplay = () => {
+                this.isPlaying = true;
+                console.log('Audio started playing');
             };
             
-            // Coba play audio
+            audioElement.onpause = () => {
+                this.isPlaying = false;
+                console.log('Audio paused');
+            };
+            
+            audioElement.onended = () => {
+                this.isPlaying = false;
+                console.log('Audio ended');
+                this.showNotification('Audio selesai diputar', 'info');
+            };
+            
             const playPromise = audioElement.play();
             
             if (playPromise !== undefined) {
                 playPromise.then(() => {
-                    console.log('Audio playback started successfully');
                     this.isPlaying = true;
                     
-                    // Notify server about playback status
-                    this.socket.emit('audio-status', 'playing');
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('audio-status', 'playing');
+                    }
                     
-                    // Jika master, beri tahu client lain untuk play
-                    if (this.isMaster) {
+                    if (this.isMaster && this.socket && this.socket.connected) {
                         this.socket.emit('play-audio', this.currentAudio);
                     }
                     
                     this.showNotification('Memutar audio...', 'success');
-                }).catch(error => {
-                    console.error('Play error:', error);
+                    console.log('Audio playback started successfully');
                     
-                    // Autoplay policy issue - tampilkan pesan ke user
+                }).catch(error => {
+                    console.error(`Play error (attempt ${retryCount + 1}):`, error);
+                    
                     if (error.name === 'NotAllowedError') {
                         this.showNotification(
-                            'Browser memblokir auto-play. Klik tombol play manual di player audio.',
+                            'Klik tombol play di player audio untuk memulai',
                             'warning'
                         );
+                        
+                        if (this.isMaster && audioElement) {
+                            audioElement.style.border = '3px solid #f59e0b';
+                            audioElement.style.boxShadow = '0 0 15px rgba(245, 158, 11, 0.7)';
+                            
+                            setTimeout(() => {
+                                this.showNotification(
+                                    'Audio siap! Klik tombol play di atas untuk memutar',
+                                    'info'
+                                );
+                            }, 1000);
+                        }
+                    } else if (error.name === 'AbortError' || error.name === 'NetworkError') {
+                        if (retryCount < this.maxPlayRetries - 1) {
+                            setTimeout(() => {
+                                this.playAudio(retryCount + 1);
+                            }, 500 * (retryCount + 1));
+                        }
                     } else {
-                        this.showNotification('Gagal memutar audio: ' + error.message, 'error');
+                        this.showNotification('Gagal memutar audio', 'error');
                     }
                 });
             }
-        } else {
-            console.error('No audio element found in DOM');
-            this.showNotification('Elemen audio tidak ditemukan', 'error');
-        }
-    }, 100); // Delay kecil untuk memastikan DOM siap
-},
-
+        },
         
         // Pause audio
         pauseAudio() {
@@ -712,7 +761,9 @@ function ttsApp() {
             if (audioElement) {
                 audioElement.pause();
                 this.isPlaying = false;
-                this.socket.emit('audio-status', 'paused');
+                if (this.socket && this.socket.connected) {
+                    this.socket.emit('audio-status', 'paused');
+                }
             }
         },
         
@@ -726,10 +777,11 @@ function ttsApp() {
                 audioElement.pause();
                 audioElement.currentTime = 0;
                 this.isPlaying = false;
-                this.socket.emit('audio-status', 'stopped');
+                if (this.socket && this.socket.connected) {
+                    this.socket.emit('audio-status', 'stopped');
+                }
                 
-                // If this client is master, notify others to stop
-                if (this.isMaster) {
+                if (this.isMaster && this.socket && this.socket.connected) {
                     this.socket.emit('stop-audio');
                 }
             }
@@ -793,20 +845,20 @@ function ttsApp() {
         },
         
         // Show notification
-        showNotification(message, type = 'info') {
+        showNotification(message, type = 'info', important = false) {
             const notification = {
                 id: Date.now() + Math.random(),
                 message: message,
                 type: type,
+                important: important,
                 timestamp: new Date().toISOString()
             };
             
             this.notifications.push(notification);
             
-            // Auto-remove after 5 seconds
             setTimeout(() => {
                 this.removeNotification(notification.id);
-            }, 5000);
+            }, important ? 10000 : 5000);
         },
         
         // Remove notification
@@ -845,10 +897,7 @@ function ttsApp() {
                 return;
             }
             
-            // Hitung karakter (termasuk spasi)
             this.charCount = this.text.length;
-            
-            // Hitung kata (hanya karakter non-whitespace)
             const trimmed = this.text.trim();
             this.wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
         },
@@ -952,7 +1001,6 @@ function ttsApp() {
             
             this.history.push(historyItem);
             
-            // Keep only last 50 items
             if (this.history.length > 50) {
                 this.history = this.history.slice(-50);
             }
@@ -981,7 +1029,6 @@ function ttsApp() {
                 }
             } catch (error) {
                 console.error('Failed to load languages:', error);
-                // Fallback to default languages
                 this.languages = [
                     { code: 'id-ID', name: 'Bahasa Indonesia', nativeName: 'Bahasa Indonesia' },
                     { code: 'en-US', name: 'English (US)', nativeName: 'English' }
