@@ -226,9 +226,23 @@
                         <button @click="pasteText()" class="btn btn-outline">
                             <i class="fas fa-paste"></i> Tempel
                         </button>
-                        <button @click="loadExample()" class="btn btn-outline">
+                        <!-- <button @click="loadExample()" class="btn btn-outline">
                             <i class="fas fa-lightbulb"></i> Contoh
-                        </button>
+                        </button> -->
+                                 <button @click="convertToSpeech()" 
+                        :disabled="isLoading || !text || !text.trim() || !masterShortId"
+                        class="btn btn-primary btn-convert">
+                    <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                    <span x-text="getConvertButtonText()"></span>
+                </button>
+                
+                <!-- <button @click="convertAndBroadcast()" 
+                        :disabled="isLoading || !text || !text.trim() || !isMaster"
+                        x-show="isMaster"
+                        class="btn btn-success">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Kirim ke Semua Komputer</span>
+                </button> -->
                     </div>
                 </div>
             </section>
@@ -284,7 +298,7 @@
             </section>
 
             <!-- Action Section -->
-            <section class="action-section">
+            <!-- <section class="action-section">
                 <button @click="convertToSpeech()" 
                         :disabled="isLoading || !text || !text.trim() || !masterShortId"
                         class="btn btn-primary btn-convert">
@@ -299,7 +313,7 @@
                     <i class="fas fa-broadcast-tower"></i>
                     <span>Kirim ke Semua Komputer</span>
                 </button>
-            </section>
+            </section> -->
 
             <!-- Audio Player Section (Master Only) -->
             <section x-show="isMaster && currentAudio" class="card audio-section">
