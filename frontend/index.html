@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panggilan Monse System - TTS Multi-Client</title>
+    <title>Panggilan Monse System - TTS Multi-Master</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -118,6 +118,10 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
     </style>
 </head>
 <body class="font-sans bg-gray-50 text-gray-800 antialiased">
@@ -125,7 +129,7 @@
     <div x-show="isLoading" class="fixed inset-0 z-50 flex items-center justify-center bg-white bg-opacity-90">
         <div class="text-center">
             <div class="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p class="text-lg font-medium text-gray-700">Memuat sistem...</p>
+            <p class="text-lg font-medium text-gray-700">Memuat sistem TTS Multi-Master...</p>
         </div>
     </div>
 
@@ -137,12 +141,12 @@
                 <div class="flex items-center justify-between h-16">
                     <!-- Left: Logo & Brand -->
                     <div class="flex items-center space-x-3">
-                        <div class="bg-primary-500 p-2.5 rounded-lg shadow-md">
+                        <div class="gradient-bg p-2.5 rounded-lg shadow-md">
                             <i class="fas fa-broadcast-tower text-white text-xl"></i>
                         </div>
                         <div>
                             <h1 class="text-xl font-display font-bold text-gray-900">Panggilan Monse</h1>
-                            <p class="text-xs text-gray-600 font-medium">TTS Multi-Client System</p>
+                            <p class="text-xs text-gray-600 font-medium">TTS Multi-Master System v3.0</p>
                         </div>
                     </div>
                     
@@ -157,6 +161,13 @@
                                      'bg-yellow-500': serverStatus === 'error'
                                  }"></div>
                             <span class="text-sm font-medium text-gray-700" x-text="serverStatusText"></span>
+                        </div>
+                        
+                        <!-- Multi-Master Status -->
+                        <div class="flex items-center space-x-2 text-gray-600">
+                            <i class="fas fa-crown text-accent-500"></i>
+                            <span class="text-sm font-medium" x-text="masterClients.length"></span>
+                            <span class="text-xs text-gray-500">master</span>
                         </div>
                         
                         <!-- Clients Count -->
@@ -190,11 +201,25 @@
                     
                     <!-- Right: Actions & User -->
                     <div class="flex items-center space-x-3">
-                        <!-- Client ID Badge -->
-                        <div x-show="clientId" class="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full bg-primary-50 border border-primary-100">
-                            <i class="fas fa-id-card text-primary-600 text-sm"></i>
-                            <span class="text-sm font-medium text-primary-700" x-text="clientIdShort"></span>
-                        </div>
+                        <!-- Target Selector Button -->
+                        <button @click="toggleTargetSelector()" 
+                                class="p-2 rounded-lg hover:bg-gray-100 transition-colors relative"
+                                title="Pilih Target Pengiriman">
+                            <i class="fas fa-bullseye text-primary-600"></i>
+                            <span x-show="currentMasterTarget === 'broadcast-all'" 
+                                  class="absolute -top-1 -right-1 w-3 h-3 bg-purple-500 rounded-full"></span>
+                        </button>
+                        
+                        <!-- Master List Button -->
+                        <button @click="toggleMasterList()" 
+                                class="p-2 rounded-lg hover:bg-gray-100 transition-colors relative"
+                                title="Daftar Master">
+                            <i class="fas fa-users-crown text-accent-600"></i>
+                            <span x-show="masterClients.length > 0" 
+                                  class="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full text-xs text-white flex items-center justify-center"
+                                  style="font-size: 8px; padding: 0 2px;" 
+                                  x-text="masterClients.length"></span>
+                        </button>
                         
                         <!-- Settings Button -->
                         <button @click="toggleMasterPreference()" 
@@ -214,59 +239,114 @@
             </div>
         </nav>
 
+        <!-- Target Selector Dropdown -->
+        <div x-show="showTargetSelector" 
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="opacity-0 transform scale-95"
+             x-transition:enter-end="opacity-100 transform scale-100"
+             class="absolute right-4 top-16 z-50 w-64 bg-white rounded-xl shadow-strong border border-gray-200 p-4">
+            <h4 class="font-medium text-gray-900 mb-3">Pilih Target Pengiriman</h4>
+            <div class="space-y-2">
+                <button @click="currentMasterTarget = 'all-masters'; saveTargetPreference(); showTargetSelector = false;"
+                        :class="currentMasterTarget === 'all-masters' ? 'bg-primary-50 border-primary-200' : 'hover:bg-gray-50'"
+                        class="w-full text-left p-3 border rounded-lg transition-colors">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-users-crown text-primary-600"></i>
+                            <div>
+                                <p class="font-medium text-gray-900">Semua Master</p>
+                                <p class="text-xs text-gray-500" x-text="'Kirim ke ' + masterClients.length + ' master'"></p>
+                            </div>
+                        </div>
+                        <i x-show="currentMasterTarget === 'all-masters'" class="fas fa-check text-primary-600"></i>
+                    </div>
+                </button>
+                
+                <button @click="toggleMasterList(); showTargetSelector = false;"
+                        :class="currentMasterTarget === 'specific-master' ? 'bg-accent-50 border-accent-200' : 'hover:bg-gray-50'"
+                        class="w-full text-left p-3 border rounded-lg transition-colors">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-user-crown text-accent-600"></i>
+                            <div>
+                                <p class="font-medium text-gray-900">Master Tertentu</p>
+                                <p class="text-xs text-gray-500" x-text="selectedMasterId ? 'Master terpilih' : 'Pilih master'"></p>
+                            </div>
+                        </div>
+                        <i x-show="currentMasterTarget === 'specific-master'" class="fas fa-check text-accent-600"></i>
+                    </div>
+                </button>
+                
+                <button @click="currentMasterTarget = 'broadcast-all'; saveTargetPreference(); showTargetSelector = false;"
+                        :class="currentMasterTarget === 'broadcast-all' ? 'bg-purple-50 border-purple-200' : 'hover:bg-gray-50'"
+                        class="w-full text-left p-3 border rounded-lg transition-colors">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-broadcast-tower text-purple-600"></i>
+                            <div>
+                                <p class="font-medium text-gray-900">Broadcast ke Semua</p>
+                                <p class="text-xs text-gray-500">Kirim ke semua client</p>
+                            </div>
+                        </div>
+                        <i x-show="currentMasterTarget === 'broadcast-all'" class="fas fa-check text-purple-600"></i>
+                    </div>
+                </button>
+            </div>
+            
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="text-xs text-gray-500" x-text="targetDescription"></p>
+            </div>
+        </div>
+
         <!-- Main Content -->
         <main class="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
-            <!-- Master Control Banner (Hanya muncul jika TIDAK ada master) -->
-            <div x-show="clientId && !isMaster && !masterClientId" 
-                 class="mb-6 p-4 rounded-xl border border-blue-200 bg-blue-50 animate-slide-in">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-3">
-                        <div class="bg-blue-100 p-2 rounded-lg">
-                            <i class="fas fa-volume-up text-blue-600"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-medium text-gray-900">Sistem TTS Multi-Client Aktif</h3>
-                            <p class="text-sm text-gray-600">
-                                Tidak ada Master Controller aktif. 
-                                <span class="text-blue-600 font-medium">Anda bisa menjadi master pertama!</span>
-                            </p>
-                        </div>
-                    </div>
-                    <button @click="requestMasterRole()" 
-                            :disabled="isRequestingMaster"
-                            class="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2">
-                        <i class="fas fa-crown"></i>
-                        <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
-                    </button>
-                </div>
+            <!-- Master Control Banner untuk Multi-Master -->
+<div x-show="clientId && !isMaster" 
+     class="mb-6 p-4 rounded-xl border border-green-200 bg-green-50 animate-slide-in">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="bg-green-100 p-2 rounded-lg">
+                <i class="fas fa-volume-up text-green-600"></i>
             </div>
+            <div>
+                <h3 class="font-medium text-gray-900">Multi-Master System Aktif</h3>
+                <p class="text-sm text-gray-600">
+                    <span x-show="masterClients.length > 0">
+                        Ada <span class="font-medium text-green-600" x-text="masterClients.length"></span> Master Controller aktif.
+                    </span>
+                    <span x-show="masterClients.length === 0">
+                        Tidak ada Master Controller aktif. 
+                        <span class="text-blue-600 font-medium">Anda bisa menjadi master pertama!</span>
+                    </span>
+                    <span x-show="wantsToBeMaster && !isMaster" class="text-yellow-600 font-medium"> 
+                        Anda ingin menjadi master.
+                    </span>
+                </p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button @click="currentMasterTarget = 'all-masters'; saveTargetPreference();"
+                    :class="currentMasterTarget === 'all-masters' ? 'bg-green-500 text-white' : 'bg-green-100 text-green-700'"
+                    class="px-3 py-1 rounded-lg text-sm font-medium transition-colors">
+                Semua Master
+            </button>
+            <button @click="toggleTargetSelector()"
+                    class="px-3 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">
+                <i class="fas fa-bullseye mr-1"></i>Target
+            </button>
+            
+            <!-- Tombol Jadikan Master (Tampil jika bukan master) -->
+            <button x-show="!isMaster" 
+                    @click="requestMasterRole()" 
+                    :disabled="isRequestingMaster"
+                    class="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2">
+                <i class="fas fa-crown"></i>
+                <span x-text="isRequestingMaster ? 'Meminta...' : 'Jadikan Master'"></span>
+            </button>
+        </div>
+    </div>
+</div>
 
-            <!-- Banner ketika sudah ada master aktif (Tanpa tombol) -->
-            <div x-show="clientId && !isMaster && masterClientId" 
-                 class="mb-6 p-4 rounded-xl border border-green-200 bg-green-50 animate-slide-in">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-3">
-                        <div class="bg-green-100 p-2 rounded-lg">
-                            <i class="fas fa-volume-up text-green-600"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-medium text-gray-900">Master Controller Aktif</h3>
-                            <p class="text-sm text-gray-600">
-                                Audio akan diputar di <span class="font-medium text-green-600">Master Controller</span>.
-                                <span x-show="wantsToBeMaster" class="text-yellow-600 font-medium">Anda dalam antrian menjadi master.</span>
-                            </p>
-                        </div>
-                    </div>
-                    <div class="text-sm text-gray-600">
-                        <span x-show="wantsToBeMaster" class="text-yellow-600 font-medium">
-                            <i class="fas fa-clock mr-1"></i>Dalam antrian
-                        </span>
-                        <span x-show="!wantsToBeMaster" class="text-gray-500">
-                            <i class="fas fa-check mr-1"></i>Master tersedia
-                        </span>
-                    </div>
-                </div>
-            </div>
 
             <!-- Master Active Panel (Hanya muncul jika pengguna adalah master) -->
             <div x-show="isMaster" class="mb-6 animate-slide-in">
@@ -278,13 +358,52 @@
                             </div>
                             <div>
                                 <h2 class="text-xl font-display font-bold text-gray-900">Master Controller Aktif</h2>
-                                <p class="text-gray-600">Anda sedang mengontrol output audio sistem</p>
+                                <p class="text-gray-600">Anda adalah salah satu dari <span class="font-medium" x-text="masterClients.length"></span> master aktif</p>
                             </div>
                         </div>
-                        <button @click="releaseMasterRole(false)"
-                                class="px-4 py-2 border border-gray-300 hover:border-gray-400 text-gray-700 rounded-lg font-medium transition-colors">
-                            Lepaskan Peran
-                        </button>
+                        <div class="flex items-center space-x-2">
+                            <button @click="broadcastAudioToAll()"
+                                    x-show="currentAudio"
+                                    class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors flex items-center space-x-2">
+                                <i class="fas fa-broadcast-tower"></i>
+                                <span>Broadcast</span>
+                            </button>
+                            <button @click="releaseMasterRole(false)"
+                                    class="px-4 py-2 border border-gray-300 hover:border-gray-400 text-gray-700 rounded-lg font-medium transition-colors">
+                                Lepaskan Peran
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Multi-Master Info -->
+                    <div class="mt-4 p-4 bg-white rounded-xl border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-medium text-gray-900 flex items-center space-x-2">
+                                <i class="fas fa-users-crown text-accent-600"></i>
+                                <span>Master Aktif Lainnya</span>
+                            </h3>
+                            <span class="px-3 py-1 bg-accent-100 text-accent-800 rounded-full text-sm font-medium"
+                                  x-text="'Total: ' + masterClients.length"></span>
+                        </div>
+                        
+                        <div class="space-y-2 max-h-32 overflow-y-auto pr-2">
+                            <template x-for="master in masterClients" :key="master.id">
+                                <div class="flex items-center justify-between p-2 border border-gray-200 rounded-lg"
+                                     :class="{'bg-accent-50': master.id === clientId}">
+                                    <div class="flex items-center space-x-2">
+                                        <i class="fas fa-crown text-accent-600 text-sm"></i>
+                                        <span class="text-sm font-medium" x-text="master.shortId"></span>
+                                        <span x-show="master.id === clientId" 
+                                              class="text-xs px-2 py-0.5 bg-accent-100 text-accent-800 rounded-full">Anda</span>
+                                    </div>
+                                    <div class="text-xs text-gray-500">Aktif</div>
+                                </div>
+                            </template>
+                            <div x-show="masterClients.length === 0" class="text-center py-4 text-gray-500">
+                                <i class="fas fa-user-slash text-xl mb-2"></i>
+                                <p class="text-sm">Tidak ada master lain yang aktif</p>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Audio Controls -->
@@ -413,7 +532,7 @@
                                     
                                     <div class="text-sm text-gray-500">
                                         <i class="fas fa-info-circle mr-1"></i>
-                                        Audio akan diputar di Master Controller
+                                        Pilih target pengiriman di pengaturan
                                     </div>
                                 </div>
                             </div>
@@ -445,6 +564,7 @@
                                             <!-- Text Preview -->
                                             <div>
                                                 <p class="text-gray-800 font-medium" x-text="truncateText(item.text, 60)"></p>
+                                                <p class="text-xs text-gray-500 mt-1" x-text="'Target: ' + (item.target || 'all-masters')"></p>
                                             </div>
                                             
                                             <!-- Metadata -->
@@ -478,7 +598,7 @@
                         </div>
                     </div>
 
-                    <!-- Settings Card -->
+                    <!-- Settings Card dengan Target Selection -->
                     <div class="bg-white rounded-2xl shadow-soft border border-gray-200">
                         <div class="px-6 py-4 border-b border-gray-200">
                             <h3 class="text-lg font-display font-bold text-gray-900">Pengaturan Konversi</h3>
@@ -486,6 +606,60 @@
                         
                         <div class="p-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <!-- Target Selection -->
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center space-x-2">
+                                        <i class="fas fa-bullseye text-primary-500"></i>
+                                        <span>Target Pengiriman</span>
+                                    </label>
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <button @click="currentMasterTarget = 'all-masters'; saveTargetPreference();"
+                                                :class="currentMasterTarget === 'all-masters' ? 'bg-primary-50 border-primary-300 text-primary-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+                                                class="p-3 border rounded-lg transition-colors text-left">
+                                            <div class="flex items-center space-x-2">
+                                                <i class="fas fa-users-crown"></i>
+                                                <div>
+                                                    <p class="font-medium">Semua Master</p>
+                                                    <p class="text-xs" x-text="masterClients.length + ' master'"></p>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        
+                                        <button @click="toggleMasterList()"
+                                                :class="currentMasterTarget === 'specific-master' ? 'bg-accent-50 border-accent-300 text-accent-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+                                                class="p-3 border rounded-lg transition-colors text-left">
+                                            <div class="flex items-center space-x-2">
+                                                <i class="fas fa-user-crown"></i>
+                                                <div>
+                                                    <p class="font-medium">Master Tertentu</p>
+                                                    <p class="text-xs" x-text="selectedMasterId ? 'Terpilih' : 'Pilih'"></p>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        
+                                        <button @click="currentMasterTarget = 'broadcast-all'; saveTargetPreference();"
+                                                :class="currentMasterTarget === 'broadcast-all' ? 'bg-purple-50 border-purple-300 text-purple-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+                                                class="p-3 border rounded-lg transition-colors text-left">
+                                            <div class="flex items-center space-x-2">
+                                                <i class="fas fa-broadcast-tower"></i>
+                                                <div>
+                                                    <p class="font-medium">Broadcast</p>
+                                                    <p class="text-xs">Semua Client</p>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Selected Target Info -->
+                                    <div class="mt-3 p-3 bg-gray-50 rounded-lg">
+                                        <p class="text-sm text-gray-700" x-text="targetDescription"></p>
+                                        <p x-show="currentMasterTarget === 'specific-master' && !selectedMasterId" 
+                                           class="text-sm text-yellow-600 mt-1">
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>Silakan pilih master target
+                                        </p>
+                                    </div>
+                                </div>
+                                
                                 <!-- Language Selection -->
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center space-x-2">
@@ -572,15 +746,35 @@
                 <div class="space-y-6">
                     <!-- Action Panel -->
                     <div class="bg-gradient-to-br from-primary-50 to-blue-50 rounded-2xl border border-primary-100 p-5">
-                        <h3 class="text-lg font-display font-bold text-gray-900 mb-4">Aksi Sistem</h3>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-display font-bold text-gray-900">Aksi Sistem</h3>
+                            <span class="px-3 py-1 rounded-full text-sm font-medium"
+                                  :class="{
+                                      'bg-primary-100 text-primary-800': currentMasterTarget === 'all-masters',
+                                      'bg-accent-100 text-accent-800': currentMasterTarget === 'specific-master',
+                                      'bg-purple-100 text-purple-800': currentMasterTarget === 'broadcast-all'
+                                  }"
+                                  x-text="currentMasterTarget === 'all-masters' ? 'Multi-Master' :
+                                         currentMasterTarget === 'specific-master' ? 'Master Spesifik' :
+                                         'Broadcast'"></span>
+                        </div>
                         
                         <div class="space-y-3">
-                            <!-- Convert Button :disabled="isLoading || !text || isMaster && !isMasterReady" -->
+                            <!-- Convert Button -->
                             <button @click="convertToSpeech()" 
-                                    :disabled="isLoading || !text"
-                                    class="w-full px-6 py-4 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3 shadow-md hover:shadow-lg">
+                                    :disabled="isLoading || !text || (currentMasterTarget === 'specific-master' && !selectedMasterId)"
+                                    :class="getConvertButtonColor()"
+                                    class="w-full px-6 py-4 text-white font-medium rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3 shadow-md hover:shadow-lg">
                                 <i class="fas" :class="isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
                                 <span class="text-lg" x-text="getConvertButtonText()"></span>
+                            </button>
+                            
+                            <!-- Broadcast Button (alternatif) -->
+                            <button x-show="currentMasterTarget !== 'broadcast-all'"
+                                    @click="currentMasterTarget = 'broadcast-all'; saveTargetPreference();"
+                                    class="w-full px-4 py-3 border border-purple-300 text-purple-700 rounded-xl hover:bg-purple-50 transition-colors flex items-center justify-center space-x-2">
+                                <i class="fas fa-broadcast-tower"></i>
+                                <span>Switch to Broadcast Mode</span>
                             </button>
                             
                             <!-- System Status -->
@@ -597,8 +791,12 @@
                                               x-text="serverStatusText"></span>
                                     </div>
                                     <div class="flex items-center justify-between text-sm">
-                                        <span class="text-gray-600">Master Saat Ini</span>
-                                        <span class="font-medium text-gray-900" x-text="isMaster ? 'Anda' : masterClientId || 'Tidak Ada'"></span>
+                                        <span class="text-gray-600">Master Aktif</span>
+                                        <span class="font-medium text-gray-900" x-text="masterClients.length"></span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-sm">
+                                        <span class="text-gray-600">Target</span>
+                                        <span class="font-medium text-gray-900" x-text="targetDescription"></span>
                                     </div>
                                     <div class="flex items-center justify-between text-sm">
                                         <span class="text-gray-600">Riwayat</span>
@@ -609,13 +807,17 @@
                         </div>
                     </div>
 
-                    <!-- Connected Clients -->
+                    <!-- Connected Clients dengan Master Highlight -->
                     <div class="bg-white rounded-2xl shadow-soft border border-gray-200">
                         <div class="px-6 py-4 border-b border-gray-200">
                             <div class="flex items-center justify-between">
                                 <h3 class="text-lg font-display font-bold text-gray-900">Klien Terhubung</h3>
-                                <span class="px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-medium"
-                                      x-text="connectedClients.length"></span>
+                                <div class="flex items-center space-x-2">
+                                    <span class="px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-medium"
+                                          x-text="connectedClients.length"></span>
+                                    <span class="px-3 py-1 bg-accent-100 text-accent-700 rounded-full text-sm font-medium"
+                                          x-text="masterClients.length + 'M'"></span>
+                                </div>
                             </div>
                         </div>
                         
@@ -625,18 +827,18 @@
                                     <div class="flex items-center justify-between p-3 border border-gray-200 rounded-xl hover:border-gray-300 transition-colors"
                                          :class="{
                                              'bg-accent-50 border-accent-200': client.isMaster,
-                                             'bg-purple-50 border-purple-200': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster
+                                             'bg-purple-50 border-purple-200': client.wantsToBeMaster && !client.isMaster
                                          }">
                                         <div class="flex items-center space-x-3">
                                             <div class="relative">
                                                 <div class="w-10 h-10 rounded-xl flex items-center justify-center"
                                                      :class="{
                                                          'bg-accent-500': client.isMaster,
-                                                         'bg-purple-500': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster,
-                                                         'bg-gray-600': !client.isMaster && !connectedClients.find(c => c.id === client.id)?.wantsToBeMaster
+                                                         'bg-purple-500': client.wantsToBeMaster && !client.isMaster,
+                                                         'bg-gray-600': !client.isMaster && !client.wantsToBeMaster
                                                      }">
                                                     <i class="fas text-white"
-                                                       :class="client.isMaster ? 'fa-crown' : (connectedClients.find(c => c.id === client.id)?.wantsToBeMaster ? 'fa-hourglass-half' : 'fa-desktop')"></i>
+                                                       :class="client.isMaster ? 'fa-crown' : (client.wantsToBeMaster ? 'fa-hourglass-half' : 'fa-desktop')"></i>
                                                 </div>
                                                 <div class="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
                                             </div>
@@ -647,11 +849,11 @@
                                                     <span class="text-xs px-2 py-0.5 rounded-full"
                                                           :class="{
                                                               'bg-accent-100 text-accent-800': client.isMaster,
-                                                              'bg-purple-100 text-purple-800': connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster,
-                                                              'bg-gray-100 text-gray-800': !client.isMaster && !connectedClients.find(c => c.id === client.id)?.wantsToBeMaster
+                                                              'bg-purple-100 text-purple-800': client.wantsToBeMaster && !client.isMaster,
+                                                              'bg-gray-100 text-gray-800': !client.isMaster && !client.wantsToBeMaster
                                                           }"
                                                           x-text="client.isMaster ? 'Master' : 'Client'"></span>
-                                                    <span x-show="connectedClients.find(c => c.id === client.id)?.wantsToBeMaster && !client.isMaster"
+                                                    <span x-show="client.wantsToBeMaster && !client.isMaster"
                                                           class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 flex items-center space-x-1">
                                                         <i class="fas fa-clock text-xs"></i>
                                                         <span>Antri</span>
@@ -676,20 +878,20 @@
                                 <i class="fas fa-wifi"></i>
                                 <span class="text-sm">Test Koneksi</span>
                             </button>
-                            <button @click="showSystemInfo()"
+                            <button @click="toggleMasterList()"
                                     class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2 justify-center">
-                                <i class="fas fa-info-circle"></i>
-                                <span class="text-sm">Info Sistem</span>
+                                <i class="fas fa-users-crown"></i>
+                                <span class="text-sm">Daftar Master</span>
                             </button>
-                            <button @click="toggleMasterPreference()"
+                            <button @click="toggleTargetSelector()"
                                     class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2 justify-center">
-                                <i class="fas fa-cog"></i>
-                                <span class="text-sm">Pengaturan</span>
+                                <i class="fas fa-bullseye"></i>
+                                <span class="text-sm">Target</span>
                             </button>
-                            <button @click="clearHistory()"
+                            <button @click="refreshMasterList()"
                                     class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2 justify-center">
-                                <i class="fas fa-trash"></i>
-                                <span class="text-sm">Hapus Riwayat</span>
+                                <i class="fas fa-sync-alt"></i>
+                                <span class="text-sm">Refresh</span>
                             </button>
                         </div>
                     </div>
@@ -745,16 +947,20 @@
                     <div class="text-center md:text-left">
                         <div class="flex items-center justify-center md:justify-start space-x-2 mb-2">
                             <div class="w-2 h-2 bg-primary-500 rounded-full"></div>
-                            <p class="text-sm font-medium text-gray-900">TTS Multi-Client System</p>
-                            <span class="text-xs px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full">v2.0</span>
+                            <p class="text-sm font-medium text-gray-900">TTS Multi-Master System v3.0</p>
+                            <span class="text-xs px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full">Multi-Target</span>
                         </div>
-                        <p class="text-xs text-gray-600">Output audio terpusat dengan master controller</p>
+                        <p class="text-xs text-gray-600">Support multiple master controllers & flexible audio targeting</p>
                     </div>
                     
                     <div class="flex items-center space-x-4 text-sm text-gray-600">
                         <span class="hidden md:inline-flex items-center space-x-2">
                             <i class="fas fa-sync-alt text-primary-500"></i>
-                            <span>Auto-Reconnect: <span class="font-medium text-green-600">Aktif</span></span>
+                            <span>Multi-Master: <span class="font-medium text-green-600">Aktif</span></span>
+                        </span>
+                        <span class="flex items-center space-x-2">
+                            <i class="fas fa-users-crown text-accent-500"></i>
+                            <span><span class="font-medium" x-text="masterClients.length"></span> master</span>
                         </span>
                         <span class="flex items-center space-x-2">
                             <i class="fas fa-users"></i>
@@ -771,6 +977,84 @@
     </div>
 
     <!-- Modals -->
+    <!-- Master List Modal -->
+    <div x-show="showMasterListModal" 
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+        <div class="bg-white rounded-2xl shadow-strong w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-display font-bold text-gray-900 flex items-center space-x-3">
+                        <div class="bg-accent-100 p-2 rounded-lg">
+                            <i class="fas fa-users-crown text-accent-600"></i>
+                        </div>
+                        <span>Daftar Master Controller</span>
+                    </h2>
+                    <button @click="showMasterListModal = false"
+                            class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                        <i class="fas fa-times text-gray-500"></i>
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <!-- Master List -->
+                    <div class="space-y-3">
+                        <template x-for="master in masterClients" :key="master.id">
+                            <div class="flex items-center justify-between p-4 border border-gray-200 rounded-xl"
+                                 :class="{'bg-accent-50': master.id === clientId}">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-10 h-10 rounded-xl bg-accent-500 flex items-center justify-center">
+                                        <i class="fas fa-crown text-white"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-medium text-gray-900" x-text="master.shortId"></h4>
+                                        <div class="flex items-center space-x-2 mt-1">
+                                            <span x-show="master.id === clientId" 
+                                                  class="text-xs px-2 py-0.5 bg-accent-100 text-accent-800 rounded-full">Anda</span>
+                                            <span class="text-xs text-gray-500">Master Controller</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex items-center space-x-2">
+                                    <button @click="selectMaster(master.id)"
+                                            :disabled="master.id === clientId"
+                                            class="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                                        Pilih
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        
+                        <div x-show="masterClients.length === 0" class="text-center py-8 border border-gray-200 rounded-xl">
+                            <i class="fas fa-user-slash text-3xl text-gray-400 mb-3"></i>
+                            <p class="text-gray-500">Tidak ada Master Controller aktif</p>
+                            <button @click="requestMasterRole()"
+                                    class="mt-3 px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg font-medium">
+                                <i class="fas fa-crown mr-2"></i>Jadikan Master
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+                        <button @click="refreshMasterList()"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center space-x-2">
+                            <i class="fas fa-sync-alt"></i>
+                            <span>Refresh</span>
+                        </button>
+                        <button @click="showMasterListModal = false"
+                                class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors">
+                            Tutup
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Master Preference Modal -->
     <div x-show="showMasterPreferenceModal" 
          x-transition:enter="transition ease-out duration-200"
@@ -873,7 +1157,7 @@
                         <div class="bg-primary-100 p-2 rounded-lg">
                             <i class="fas fa-info-circle text-primary-600"></i>
                         </div>
-                        <span>Informasi Sistem</span>
+                        <span>Informasi Sistem TTS Multi-Master</span>
                     </h2>
                     <button @click="showSystemInfoModal = false"
                             class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -885,7 +1169,10 @@
                     <!-- System Description -->
                     <div class="prose max-w-none">
                         <p class="text-gray-700">
-                            <strong>TTS Multi-Client System</strong> adalah sistem Text-to-Speech terdistribusi yang memungkinkan beberapa komputer mengirim teks untuk dikonversi menjadi audio, dengan output terpusat pada satu komputer (Master Controller).
+                            <strong>TTS Multi-Master System v3.0</strong> adalah sistem Text-to-Speech terdistribusi yang memungkinkan beberapa komputer menjadi Master Controller secara bersamaan.
+                        </p>
+                        <p class="text-gray-700 mt-2">
+                            Sistem ini mendukung berbagai mode pengiriman audio dengan fleksibilitas tinggi untuk berbagai skenario penggunaan.
                         </p>
                     </div>
                     
@@ -893,31 +1180,65 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="p-4 bg-blue-50 rounded-xl">
                             <h4 class="font-medium text-gray-900 mb-2 flex items-center space-x-2">
-                                <i class="fas fa-crown text-blue-600"></i>
-                                <span>Master Controller</span>
+                                <i class="fas fa-users-crown text-blue-600"></i>
+                                <span>Multi-Master</span>
                             </h4>
-                            <p class="text-sm text-gray-600">Satu komputer bertugas memutar audio untuk seluruh sistem.</p>
+                            <p class="text-sm text-gray-600">Banyak komputer bisa menjadi Master Controller bersamaan.</p>
                         </div>
                         <div class="p-4 bg-green-50 rounded-xl">
                             <h4 class="font-medium text-gray-900 mb-2 flex items-center space-x-2">
-                                <i class="fas fa-broadcast-tower text-green-600"></i>
-                                <span>Broadcast Audio</span>
+                                <i class="fas fa-bullseye text-green-600"></i>
+                                <span>Flexible Targeting</span>
                             </h4>
-                            <p class="text-sm text-gray-600">Master dapat mengirim audio ke semua komputer terhubung.</p>
+                            <p class="text-sm text-gray-600">Kirim ke semua master, master tertentu, atau broadcast ke semua.</p>
                         </div>
                         <div class="p-4 bg-purple-50 rounded-xl">
                             <h4 class="font-medium text-gray-900 mb-2 flex items-center space-x-2">
-                                <i class="fas fa-sync-alt text-purple-600"></i>
+                                <i class="fas fa-broadcast-tower text-purple-600"></i>
+                                <span>Audio Broadcast</span>
+                            </h4>
+                            <p class="text-sm text-gray-600">Master dapat mengirim audio ke semua client sekaligus.</p>
+                        </div>
+                        <div class="p-4 bg-yellow-50 rounded-xl">
+                            <h4 class="font-medium text-gray-900 mb-2 flex items-center space-x-2">
+                                <i class="fas fa-sync-alt text-yellow-600"></i>
                                 <span>Auto-Reconnect</span>
                             </h4>
                             <p class="text-sm text-gray-600">Master otomatis kembali saat koneksi terputus.</p>
                         </div>
-                        <div class="p-4 bg-yellow-50 rounded-xl">
-                            <h4 class="font-medium text-gray-900 mb-2 flex items-center space-x-2">
-                                <i class="fas fa-history text-yellow-600"></i>
-                                <span>Riwayat Lengkap</span>
-                            </h4>
-                            <p class="text-sm text-gray-600">Semua konversi disimpan dalam riwayat sistem.</p>
+                    </div>
+                    
+                    <!-- Target Modes -->
+                    <div class="border-t border-gray-200 pt-4">
+                        <h4 class="font-medium text-gray-900 mb-3">Mode Pengiriman Audio</h4>
+                        <div class="space-y-3">
+                            <div class="flex items-start space-x-3">
+                                <div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                                    <i class="fas fa-users-crown text-primary-600 text-sm"></i>
+                                </div>
+                                <div>
+                                    <h5 class="font-medium text-gray-900">Semua Master</h5>
+                                    <p class="text-sm text-gray-600">Audio dikirim ke semua Master Controller yang aktif secara bersamaan.</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-3">
+                                <div class="w-8 h-8 rounded-full bg-accent-100 flex items-center justify-center flex-shrink-0">
+                                    <i class="fas fa-user-crown text-accent-600 text-sm"></i>
+                                </div>
+                                <div>
+                                    <h5 class="font-medium text-gray-900">Master Tertentu</h5>
+                                    <p class="text-sm text-gray-600">Pilih satu Master Controller spesifik sebagai tujuan pengiriman.</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-3">
+                                <div class="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                                    <i class="fas fa-broadcast-tower text-purple-600 text-sm"></i>
+                                </div>
+                                <div>
+                                    <h5 class="font-medium text-gray-900">Broadcast ke Semua</h5>
+                                    <p class="text-sm text-gray-600">Audio dikirim ke semua client terhubung, termasuk non-master.</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
@@ -930,6 +1251,7 @@
                             <p>• Maksimal karakter per konversi: 5000 karakter</p>
                             <p>• Dukungan bahasa: Indonesia, Inggris, dan 20+ bahasa lainnya</p>
                             <p>• Compatible dengan semua browser modern</p>
+                            <p>• Multi-master support: Unlimited concurrent masters</p>
                         </div>
                     </div>
                     
@@ -957,7 +1279,7 @@
                         <div class="bg-accent-100 p-2 rounded-lg">
                             <i class="fas fa-question-circle text-accent-600"></i>
                         </div>
-                        <span>Panduan Penggunaan</span>
+                        <span>Panduan Penggunaan Multi-Master</span>
                     </h2>
                     <button @click="showHelpModal = false"
                             class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -979,24 +1301,55 @@
                         <div class="flex space-x-4">
                             <div class="flex-shrink-0 w-8 h-8 bg-primary-500 text-white rounded-full flex items-center justify-center font-bold">2</div>
                             <div>
-                                <h4 class="font-medium text-gray-900 mb-1">Tetapkan Master Controller</h4>
-                                <p class="text-sm text-gray-600">Di komputer dengan speaker aktif, klik "Jadikan Master" untuk mengontrol output audio.</p>
+                                <h4 class="font-medium text-gray-900 mb-1">Tetapkan Multiple Master Controller</h4>
+                                <p class="text-sm text-gray-600">Di beberapa komputer dengan speaker aktif, klik "Jadikan Master" untuk membuat multi-master system.</p>
                             </div>
                         </div>
                         
                         <div class="flex space-x-4">
                             <div class="flex-shrink-0 w-8 h-8 bg-primary-500 text-white rounded-full flex items-center justify-center font-bold">3</div>
                             <div>
-                                <h4 class="font-medium text-gray-900 mb-1">Kirim Teks untuk Dikonversi</h4>
-                                <p class="text-sm text-gray-600">Di komputer lain, masukkan teks dan klik "Kirim ke Master". Audio akan diputar di Master.</p>
+                                <h4 class="font-medium text-gray-900 mb-1">Pilih Target Pengiriman</h4>
+                                <p class="text-sm text-gray-600">Pilih target: Semua Master, Master Tertentu, atau Broadcast ke Semua Client.</p>
                             </div>
                         </div>
                         
                         <div class="flex space-x-4">
                             <div class="flex-shrink-0 w-8 h-8 bg-primary-500 text-white rounded-full flex items-center justify-center font-bold">4</div>
                             <div>
-                                <h4 class="font-medium text-gray-900 mb-1">Broadcast (Opsional)</h4>
-                                <p class="text-sm text-gray-600">Master dapat mengirim audio ke semua komputer dengan fitur broadcast.</p>
+                                <h4 class="font-medium text-gray-900 mb-1">Kirim Teks untuk Dikonversi</h4>
+                                <p class="text-sm text-gray-600">Masukkan teks dan klik "Kirim". Audio akan dikirim sesuai target yang dipilih.</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-4">
+                            <div class="flex-shrink-0 w-8 h-8 bg-primary-500 text-white rounded-full flex items-center justify-center font-bold">5</div>
+                            <div>
+                                <h4 class="font-medium text-gray-900 mb-1">Broadcast dari Master (Opsional)</h4>
+                                <p class="text-sm text-gray-600">Master dapat mengirim audio yang diterima ke semua client dengan tombol Broadcast.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Use Cases -->
+                    <div class="border-t border-gray-200 pt-4">
+                        <h4 class="font-medium text-gray-900 mb-3">Contoh Penggunaan</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="p-3 bg-blue-50 rounded-xl">
+                                <h5 class="font-medium text-blue-800 mb-1">Meeting Room dengan Multiple Speaker</h5>
+                                <p class="text-sm text-blue-600">Gunakan mode "Semua Master" untuk mengirim audio ke semua speaker di ruangan berbeda.</p>
+                            </div>
+                            <div class="p-3 bg-green-50 rounded-xl">
+                                <h5 class="font-medium text-green-800 mb-1">Koordinasi Tim</h5>
+                                <p class="text-sm text-green-600">Pilih "Master Tertentu" untuk mengirim instruksi ke leader tim tertentu.</p>
+                            </div>
+                            <div class="p-3 bg-purple-50 rounded-xl">
+                                <h5 class="font-medium text-purple-800 mb-1">Pengumuman Umum</h5>
+                                <p class="text-sm text-purple-600">Gunakan "Broadcast ke Semua" untuk pengumuman yang perlu didengar semua orang.</p>
+                            </div>
+                            <div class="p-3 bg-yellow-50 rounded-xl">
+                                <h5 class="font-medium text-yellow-800 mb-1">Redundansi Sistem</h5>
+                                <p class="text-sm text-yellow-600">Multiple master memastikan sistem tetap berjalan jika satu master down.</p>
                             </div>
                         </div>
                     </div>
@@ -1006,16 +1359,16 @@
                         <h4 class="font-medium text-gray-900 mb-3">Pemecahan Masalah</h4>
                         <div class="space-y-3">
                             <div class="p-3 bg-red-50 rounded-xl">
-                                <h5 class="font-medium text-red-800 mb-1">Audio Tidak Keluar</h5>
-                                <p class="text-sm text-red-600">Periksa speaker komputer Master dan pastikan volume cukup.</p>
+                                <h5 class="font-medium text-red-800 mb-1">Audio Tidak Keluar di Master</h5>
+                                <p class="text-sm text-red-600">Periksa speaker master dan pastikan browser mengizinkan autoplay audio.</p>
                             </div>
                             <div class="p-3 bg-yellow-50 rounded-xl">
                                 <h5 class="font-medium text-yellow-800 mb-1">Tidak Bisa Jadi Master</h5>
-                                <p class="text-sm text-yellow-600">Hanya satu Master yang aktif. Tunggu atau minta Master saat ini melepaskan peran.</p>
+                                <p class="text-sm text-yellow-600">Sistem mendukung multiple master. Tidak ada batasan jumlah master.</p>
                             </div>
                             <div class="p-3 bg-green-50 rounded-xl">
                                 <h5 class="font-medium text-green-800 mb-1">Koneksi Terputus</h5>
-                                <p class="text-sm text-green-600">Sistem akan otomatis reconnect. Master akan coba kembali sebagai Master.</p>
+                                <p class="text-sm text-green-600">Sistem auto-reconnect. Master akan coba kembali sebagai master jika di-set.</p>
                             </div>
                         </div>
                     </div>
