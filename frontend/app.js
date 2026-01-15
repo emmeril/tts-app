@@ -47,11 +47,11 @@ function ttsApp() {
         
         // Initialize
         init() {
-            console.log('=== TTS App Initializing ===');
-            console.log('Auto-play policy check:', {
-                userAgent: navigator.userAgent,
-                autoplay: 'autoplay' in document.createElement('audio')
-            });
+            // console.log('=== TTS App Initializing ===');
+            // console.log('Auto-play policy check:', {
+            //     userAgent: navigator.userAgent,
+            //     autoplay: 'autoplay' in document.createElement('audio')
+            // });
             
             this.updateCharCount();
             this.loadLanguages();
@@ -63,7 +63,7 @@ function ttsApp() {
             // Enable audio setelah interaksi user pertama
             document.addEventListener('click', () => {
                 this.audioEnabled = true;
-                console.log('Audio enabled by user interaction');
+                // console.log('Audio enabled by user interaction');
             }, { once: true });
             
             // Prompt untuk interaksi pertama kali
@@ -82,7 +82,7 @@ function ttsApp() {
                 if (!this.socket || !this.socket.connected) {
                     this.serverStatus = 'disconnected';
                     this.serverStatusText = 'Mencoba menyambung ulang...';
-                    console.log('Attempting to reconnect...');
+                    // console.log('Attempting to reconnect...');
                     this.initSocket();
                 }
             }, 5000);
@@ -106,18 +106,18 @@ function ttsApp() {
         
         // Initialize Socket.io connection
         initSocket() {
-            console.log('Initializing socket connection...');
+            // // console.log('Initializing socket connection...');
             
             // Close existing connection
             if (this.socket) {
                 this.socket.disconnect();
-                console.log('Closed existing socket connection');
+                // console.log('Closed existing socket connection');
             }
             
             // Get reconnection flag from URL or localStorage
             const reconnected = localStorage.getItem('ttsReconnecting') === 'true';
             if (reconnected) {
-                console.log('This is a reconnection attempt');
+                // console.log('This is a reconnection attempt');
                 this.wasMasterBeforeDisconnect = localStorage.getItem('ttsWasMaster') === 'true';
             }
             
@@ -133,7 +133,7 @@ function ttsApp() {
             
             // Socket event listeners
             this.socket.on('connect', () => {
-                console.log('Socket connected:', this.socket.id);
+                // // console.log('Socket connected:', this.socket.id);
                 this.serverStatus = 'connected';
                 this.serverStatusText = 'Terhubung ke server';
                 this.reconnectAttempts = 0;
@@ -166,11 +166,11 @@ function ttsApp() {
                 // Save client ID to localStorage for reconnection
                 localStorage.setItem('ttsClientId', this.clientId);
                 
-                console.log('Welcome received, clientId:', this.clientId);
+                // // console.log('Welcome received, clientId:', this.clientId);
             });
             
             this.socket.on('connection-status', (data) => {
-                console.log('Connection status received:', data);
+                // // console.log('Connection status received:', data);
                 this.clientId = data.clientId;
                 this.clientIdShort = data.clientId.substring(0, 8);
                 this.isMaster = data.isMaster;
@@ -185,7 +185,7 @@ function ttsApp() {
                     
                     setTimeout(() => {
                         if (this.wantsToBeMaster && !this.isMaster && !this.masterClientId) {
-                            console.log('Auto-requesting master role after connection...');
+                            // console.log('Auto-requesting master role after connection...');
                             this.reconnectAttempts++;
                             this.requestMasterRole(true);
                         }
@@ -219,7 +219,7 @@ function ttsApp() {
             });
             
             this.socket.on('master-changed', (data) => {
-                console.log('Master changed:', data);
+                // // console.log('Master changed:', data);
                 this.masterClientId = data.masterClientId;
                 this.isMaster = (this.clientId === data.masterClientId);
                 
@@ -242,7 +242,7 @@ function ttsApp() {
             });
             
             this.socket.on('master-role-granted', (data) => {
-                console.log('Master role granted:', data);
+                // // console.log('Master role granted:', data);
                 this.isMaster = true;
                 this.isRequestingMaster = false;
                 this.masterClientId = this.clientId;
@@ -261,7 +261,7 @@ function ttsApp() {
             });
             
             this.socket.on('master-role-denied', (data) => {
-                console.log('Master role denied:', data);
+                // // console.log('Master role denied:', data);
                 this.isRequestingMaster = false;
                 this.showNotification(`Gagal menjadi Master: ${data.reason}`, 'error');
                 
@@ -271,7 +271,7 @@ function ttsApp() {
             });
             
             this.socket.on('master-role-released', (data) => {
-                console.log('Master role released:', data);
+                // // console.log('Master role released:', data);
                 this.isMaster = false;
                 this.masterClientId = null;
                 
@@ -287,7 +287,7 @@ function ttsApp() {
             });
             
             this.socket.on('master-disconnected', (data) => {
-                console.log('Master disconnected:', data);
+                // // console.log('Master disconnected:', data);
                 this.masterClientId = null;
                 
                 if (data.wantsToBeMaster) {
@@ -311,11 +311,11 @@ function ttsApp() {
             });
             
             this.socket.on('tts-audio', (data) => {
-                console.log('Menerima TTS audio:', data);
+                // // console.log('Menerima TTS audio:', data);
                 
                 // PERBAIKAN: Hanya Master yang memproses audio ini
                 if (this.isMaster) {
-                    console.log('Master menerima TTS audio dari client:', data);
+                    // // console.log('Master menerima TTS audio dari client:', data);
                     
                     // Store the audio data
                     this.currentAudio = data;
@@ -328,7 +328,7 @@ function ttsApp() {
                         return;
                     }
                     
-                    console.log('Master akan memutar audio dari:', data.fromClientId);
+                    // // console.log('Master akan memutar audio dari:', data.fromClientId);
                     
                     // Tampilkan notifikasi
                     this.showNotification(`Menerima audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
@@ -339,7 +339,7 @@ function ttsApp() {
                     }, 300);
                 } else {
                     // Client biasa hanya menampilkan notifikasi, TIDAK menyimpan atau memutar
-                    console.log('Client biasa: Audio dikirim ke Master');
+                    // // console.log('Client biasa: Audio dikirim ke Master');
                     this.showNotification(
                         `Teks telah dikirim ke Master ${data.masterClientId?.substring(0, 8) || ''}`,
                         'info'
@@ -416,11 +416,11 @@ function ttsApp() {
             });
             
             this.socket.on('pong', (data) => {
-                console.log('Pong received:', data);
+                // // console.log('Pong received:', data);
             });
             
             this.socket.on('disconnect', (reason) => {
-                console.log('Socket disconnected:', reason);
+                // // console.log('Socket disconnected:', reason);
                 this.serverStatus = 'disconnected';
                 this.serverStatusText = 'Terputus dari server';
                 
@@ -460,7 +460,7 @@ function ttsApp() {
                 clientId: this.clientId
             };
             localStorage.setItem('ttsMasterPreference', JSON.stringify(preference));
-            console.log('Master preference saved:', preference);
+            // // console.log('Master preference saved:', preference);
         },
         
         // Load master preference from localStorage
@@ -471,7 +471,7 @@ function ttsApp() {
                     const preference = JSON.parse(saved);
                     this.wantsToBeMaster = preference.wantsToBeMaster || false;
                     this.autoRequestMaster = preference.autoRequestMaster !== false;
-                    console.log('Master preference loaded:', preference);
+                    // // console.log('Master preference loaded:', preference);
                 }
             } catch (error) {
                 console.error('Failed to load master preference:', error);
@@ -485,7 +485,7 @@ function ttsApp() {
             localStorage.removeItem('ttsMasterPreference');
             this.wantsToBeMaster = false;
             this.autoRequestMaster = true;
-            console.log('Master preference cleared');
+            // console.log('Master preference cleared');
         },
         
         // Save audio state to localStorage
@@ -497,7 +497,7 @@ function ttsApp() {
                 clientId: this.clientId
             };
             localStorage.setItem('ttsAudioState', JSON.stringify(audioState));
-            console.log('Audio state saved');
+            // console.log('Audio state saved');
         },
         
         // Load audio state from localStorage
@@ -513,7 +513,7 @@ function ttsApp() {
                     
                     if (diffMinutes < 10 && audioState.currentAudio) {
                         this.currentAudio = audioState.currentAudio;
-                        console.log('Audio state loaded from localStorage');
+                        // console.log('Audio state loaded from localStorage');
                     }
                 }
             } catch (error) {
@@ -524,7 +524,7 @@ function ttsApp() {
         // Clear audio state
         clearAudioState() {
             localStorage.removeItem('ttsAudioState');
-            console.log('Audio state cleared');
+            // console.log('Audio state cleared');
         },
         
         // Request master role
@@ -609,11 +609,11 @@ function ttsApp() {
         
         // Play audio - PERBAIKAN UTAMA
         playAudio(retryCount = 0) {
-            console.log(`playAudio called, retry: ${retryCount}`);
+            // console.log(`playAudio called, retry: ${retryCount}`);
             
             // PERBAIKAN: Jika bukan master dan audio bukan broadcast, jangan putar
             if (!this.isMaster && !this.currentAudio?.broadcast) {
-                console.log('Client biasa tidak memutar audio non-broadcast');
+                // console.log('Client biasa tidak memutar audio non-broadcast');
                 this.showNotification('Audio hanya dapat diputar oleh Master Controller', 'info');
                 return;
             }
@@ -656,23 +656,23 @@ function ttsApp() {
                 }
             }
             
-            console.log('Setting audio source:', this.currentAudio.audioUrl);
+            // console.log('Setting audio source:', this.currentAudio.audioUrl);
             audioElement.src = this.currentAudio.audioUrl;
             audioElement.load();
             
             audioElement.onplay = () => {
                 this.isPlaying = true;
-                console.log('Audio started playing');
+                // console.log('Audio started playing');
             };
             
             audioElement.onpause = () => {
                 this.isPlaying = false;
-                console.log('Audio paused');
+                // console.log('Audio paused');
             };
             
             audioElement.onended = () => {
                 this.isPlaying = false;
-                console.log('Audio ended');
+                // console.log('Audio ended');
                 this.showNotification('Audio selesai diputar', 'info');
             };
             
@@ -691,7 +691,7 @@ function ttsApp() {
                     }
                     
                     this.showNotification('Memutar audio...', 'success');
-                    console.log('Audio playback started successfully');
+                    // console.log('Audio playback started successfully');
                     
                 }).catch(error => {
                     console.error(`Play error (attempt ${retryCount + 1}):`, error);
