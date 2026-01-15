@@ -29,6 +29,9 @@ function ttsApp() {
         isPlaying: false,
         currentAudio: null,
         
+        // Mobile Menu State
+        showMobileMenu: false,
+        
         // Data
         connectedClients: [],
         languages: [],
@@ -975,6 +978,16 @@ function ttsApp() {
         getConvertButtonText() {
             if (this.isLoading) return 'Memproses...';
             return `Kirim ke ${this.masterClients.length} Master`;
+        },
+        
+        // Toggle Mobile Menu
+        toggleMobileMenu() {
+            this.showMobileMenu = !this.showMobileMenu;
+        },
+        
+        // Close Mobile Menu
+        closeMobileMenu() {
+            this.showMobileMenu = false;
         },
         
         // Helper methods
