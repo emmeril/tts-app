@@ -19,9 +19,6 @@ function ttsApp() {
         
         // Multi-Master State
         masterClients: [], // Daftar semua master
-        currentMasterTarget: 'all-masters',
-        selectedMasterId: null,
-        showTargetSelector: false,
         
         // UI State
         text: '',
@@ -58,7 +55,6 @@ function ttsApp() {
             this.loadLanguages();
             this.loadHistory();
             this.loadMasterPreference();
-            this.loadTargetPreference();
             this.loadAudioState();
             this.loadClientId();
             
@@ -115,7 +111,6 @@ function ttsApp() {
             window.addEventListener('beforeunload', () => {
                 this.saveAudioState();
                 this.saveMasterPreference();
-                this.saveTargetPreference();
                 this.saveClientId();
             });
             
@@ -449,44 +444,10 @@ function ttsApp() {
                     }, 300);
                 } else {
                     // Client biasa hanya menampilkan notifikasi
-                    if (data.target === 'broadcast-all') {
-                        // Client biasa menerima broadcast, bisa memutar
-                        this.currentAudio = data;
-                        this.showNotification(
-                            `Menerima broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`,
-                            'info'
-                        );
-                        
-                        // Auto-play jika diizinkan
-                        if (this.audioEnabled) {
-                            setTimeout(() => {
-                                this.playAudio();
-                            }, 500);
-                        }
-                    } else {
-                        this.showNotification(
-                            `Teks telah dikirim ke ${data.masterCount || 1} Master`,
-                            'info'
-                        );
-                    }
-                }
-            });
-            
-            this.socket.on('tts-audio-broadcast', (data) => {
-                // Semua client menerima broadcast audio
-                this.currentAudio = data;
-                this.saveAudioState();
-                
-                this.showNotification(
-                    `Menerima broadcast audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`,
-                    'info'
-                );
-                
-                // Auto-play jika diizinkan dan bukan master yang mengirim
-                if (this.audioEnabled && data.fromClientId !== this.clientId) {
-                    setTimeout(() => {
-                        this.playAudio();
-                    }, 500);
+                    this.showNotification(
+                        `Teks telah dikirim ke ${data.masterCount || 1} Master`,
+                        'info'
+                    );
                 }
             });
             
@@ -498,7 +459,6 @@ function ttsApp() {
                     text: this.text,
                     language: this.language,
                     speed: this.speed,
-                    target: data.target || 'all-masters',
                     success: true,
                     timestamp: new Date().toISOString(),
                     masterCount: data.masterCount || 1,
@@ -522,7 +482,6 @@ function ttsApp() {
                     text: this.text,
                     language: this.language,
                     speed: this.speed,
-                    target: data.target || 'all-masters',
                     success: false,
                     timestamp: new Date().toISOString(),
                     message: data.message,
@@ -538,7 +497,6 @@ function ttsApp() {
                     text: this.text,
                     language: this.language,
                     speed: this.speed,
-                    target: this.currentMasterTarget,
                     success: false,
                     timestamp: new Date().toISOString(),
                     error: data.error
@@ -564,12 +522,7 @@ function ttsApp() {
             
             this.socket.on('tts-notification', (data) => {
                 if (data.fromClientId !== this.clientId) {
-                    let targetText = '';
-                    if (data.target === 'all-masters') targetText = 'ke semua master';
-                    else if (data.target === 'specific-master') targetText = 'ke master tertentu';
-                    else if (data.target === 'broadcast-all') targetText = 'ke semua client';
-                    
-                    this.showNotification(`${data.fromClientId} mengirim teks ${targetText}: "${data.textPreview}"`, 'info');
+                    this.showNotification(`${data.fromClientId} mengirim teks ke semua master: "${data.textPreview}"`, 'info');
                 }
             });
             
@@ -587,7 +540,6 @@ function ttsApp() {
                 // Save current state
                 this.saveAudioState();
                 this.saveMasterPreference();
-                this.saveTargetPreference();
                 this.saveClientId();
                 
                 if (this.isMaster) {
@@ -624,15 +576,6 @@ function ttsApp() {
                 if (!isStillMaster) {
                     this.isMaster = false;
                     this.showNotification('Anda telah dikeluarkan dari daftar master', 'warning');
-                }
-            }
-            
-            // Jika selectedMasterId tidak ada lagi di daftar, reset
-            if (this.selectedMasterId && !this.masterClients.some(m => m.id === this.selectedMasterId)) {
-                this.selectedMasterId = null;
-                if (this.currentMasterTarget === 'specific-master') {
-                    this.currentMasterTarget = 'all-masters';
-                    this.showNotification('Master target terputus, mengubah ke semua master', 'warning');
                 }
             }
         },
@@ -672,32 +615,6 @@ function ttsApp() {
                 this.autoRequestMaster = true;
                 this.wasMasterBeforeDisconnect = false;
             }
-        },
-        
-        // Load target preference
-        loadTargetPreference() {
-            try {
-                const saved = localStorage.getItem('ttsTargetPreference');
-                if (saved) {
-                    const pref = JSON.parse(saved);
-                    this.currentMasterTarget = pref.target || 'all-masters';
-                    this.selectedMasterId = pref.selectedMasterId;
-                }
-            } catch (error) {
-                console.error('Failed to load target preference:', error);
-                this.currentMasterTarget = 'all-masters';
-                this.selectedMasterId = null;
-            }
-        },
-        
-        // Save target preference
-        saveTargetPreference() {
-            const targetPref = {
-                target: this.currentMasterTarget,
-                selectedMasterId: this.selectedMasterId,
-                savedAt: new Date().toISOString()
-            };
-            localStorage.setItem('ttsTargetPreference', JSON.stringify(targetPref));
         },
         
         // Clear master preference
@@ -790,7 +707,7 @@ function ttsApp() {
             }
         },
         
-        // Convert text to speech with target selection
+        // Convert text to speech (hanya ke semua master)
         async convertToSpeech() {
             if (!this.text || !this.text.trim()) {
                 this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
@@ -815,64 +732,17 @@ function ttsApp() {
                     language: this.language,
                     speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
                     priority: this.priority,
-                    timestamp: new Date().toISOString(),
-                    target: this.currentMasterTarget
+                    timestamp: new Date().toISOString()
                 };
                 
-                // Tambahkan target master jika spesifik
-                if (this.currentMasterTarget === 'specific-master' && this.selectedMasterId) {
-                    requestData.targetMasterId = this.selectedMasterId;
-                }
-                
                 this.socket.emit('tts-request', requestData);
-                this.showNotification('Mengirim permintaan TTS...', 'info');
+                this.showNotification('Mengirim teks ke semua Master...', 'info');
                 
             } catch (error) {
                 this.isLoading = false;
                 this.showNotification(`Gagal mengirim: ${error.message}`, 'error');
                 console.error('TTS Error:', error);
             }
-        },
-        
-        // Broadcast TTS to all clients
-        async broadcastToAll() {
-            if (!this.text || !this.text.trim()) {
-                this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
-                return;
-            }
-            
-            this.isLoading = true;
-            
-            try {
-                this.socket.emit('tts-broadcast', {
-                    text: this.text.trim(),
-                    language: this.language,
-                    speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
-                    timestamp: new Date().toISOString()
-                });
-                
-                this.showNotification('Mengirim broadcast ke semua client...', 'info');
-                
-            } catch (error) {
-                this.isLoading = false;
-                this.showNotification(`Gagal broadcast: ${error.message}`, 'error');
-            }
-        },
-        
-        // Master broadcast audio to all clients
-        broadcastAudioToAll() {
-            if (!this.isMaster || !this.currentAudio) {
-                this.showNotification('Hanya master yang bisa melakukan broadcast', 'error');
-                return;
-            }
-            
-            this.socket.emit('play-audio', {
-                ...this.currentAudio,
-                target: 'all-clients',
-                timestamp: new Date().toISOString()
-            });
-            
-            this.showNotification('Mengirim audio ke semua client...', 'info');
         },
         
         // Play audio
@@ -1104,29 +974,7 @@ function ttsApp() {
         // Get convert button text
         getConvertButtonText() {
             if (this.isLoading) return 'Memproses...';
-            
-            let baseText = 'Kirim ';
-            switch (this.currentMasterTarget) {
-                case 'all-masters':
-                    return baseText + 'ke Semua Master';
-                case 'specific-master':
-                    const selected = this.masterClients.find(m => m.id === this.selectedMasterId);
-                    return baseText + (selected ? `ke Master ${selected.shortId}` : 'ke Master');
-                case 'broadcast-all':
-                    return 'Broadcast ke Semua';
-                default:
-                    return 'Kirim ke Master';
-            }
-        },
-        
-        // Get convert button color based on target
-        getConvertButtonColor() {
-            switch (this.currentMasterTarget) {
-                case 'broadcast-all':
-                    return 'bg-purple-500 hover:bg-purple-600';
-                default:
-                    return 'bg-primary-500 hover:bg-primary-600';
-            }
+            return `Kirim ke ${this.masterClients.length} Master`;
         },
         
         // Helper methods
@@ -1161,7 +1009,7 @@ function ttsApp() {
         loadExample() {
             const examples = [
                 "Halo, selamat datang di sistem TTS Multi-Master.",
-                "Audio dapat dikirim ke semua master atau master tertentu.",
+                "Audio dapat dikirim ke semua master yang aktif.",
                 "Silakan masukkan teks Anda di sini untuk dikonversi menjadi suara.",
                 "Sistem ini mendukung multiple master controller."
             ];
@@ -1216,7 +1064,6 @@ function ttsApp() {
             this.text = item.text;
             this.language = item.language;
             this.speed = item.speed;
-            this.currentMasterTarget = item.target || 'all-masters';
             this.updateCharCount();
             this.showNotification('Teks dimuat dari riwayat', 'info');
         },
@@ -1306,24 +1153,6 @@ function ttsApp() {
             }
         },
         
-        toggleTargetSelector() {
-            this.showTargetSelector = !this.showTargetSelector;
-        },
-        
-        // Select master for specific target
-        selectMaster(masterId) {
-            this.selectedMasterId = masterId;
-            this.currentMasterTarget = 'specific-master';
-            this.saveTargetPreference();
-            
-            const master = this.masterClients.find(m => m.id === masterId);
-            if (master) {
-                this.showNotification(`Mengirim ke master: ${master.shortId}`, 'info');
-            }
-            
-            this.showTargetSelector = false;
-        },
-        
         // Get master status badge
         get masterStatusBadge() {
             if (this.isMaster) {
@@ -1343,21 +1172,6 @@ function ttsApp() {
                 return 'warning';
             } else {
                 return 'secondary';
-            }
-        },
-        
-        // Get target description
-        get targetDescription() {
-            switch (this.currentMasterTarget) {
-                case 'all-masters':
-                    return `Kirim ke ${this.masterClients.length} master aktif`;
-                case 'specific-master':
-                    const selected = this.masterClients.find(m => m.id === this.selectedMasterId);
-                    return selected ? `Kirim ke master ${selected.shortId}` : 'Pilih master target';
-                case 'broadcast-all':
-                    return 'Broadcast ke semua client';
-                default:
-                    return 'Pilih target pengiriman';
             }
         }
     };

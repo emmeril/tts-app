@@ -357,12 +357,12 @@ io.on('connection', (socket) => {
     });
   });
   
-  // Handle TTS request from clients
+  // Handle TTS request from clients (HANYA KE SEMUA MASTER)
   socket.on('tts-request', async (data) => {
     const client = connectedClients.get(socket.id);
-    const { text, language = 'id-ID', speed = 1.0, priority = 'normal', target = 'all-masters', targetMasterId } = data;
+    const { text, language = 'id-ID', speed = 1.0, priority = 'normal' } = data;
     
-    console.log(`[${new Date().toISOString()}] TTS Request from ${client?.id} to ${target}: ${language}, Text Length: ${text?.length || 0}`);
+    console.log(`[${new Date().toISOString()}] TTS Request from ${client?.id} to all masters: ${language}, Text Length: ${text?.length || 0}`);
     
     try {
       // Validasi input dengan detail
@@ -399,17 +399,14 @@ io.on('connection', (socket) => {
           text: trimmedText,
           fromClientId: client.id,
           timestamp: new Date().toISOString(),
-          priority: priority,
-          target: target,
-          targetMasterId: targetMasterId
+          priority: priority
         });
         
         socket.emit('tts-queued', {
           success: true,
           message: 'TTS request dalam antrian. Menunggu master controller...',
           queuePosition: masterRequestQueue.length,
-          textLength: text.length,
-          target: target
+          textLength: text.length
         });
         
         io.emit('master-needed', {
@@ -427,92 +424,34 @@ io.on('connection', (socket) => {
         speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
       });
       
-      // Handle different target types
-      if (target === 'all-masters') {
-        // Kirim ke semua master
-        masterClients.forEach(masterSocketId => {
-          io.to(masterSocketId).emit('tts-audio', {
-            ...result,
-            fromClientId: client.id,
-            fromClientSocketId: socket.id,
-            timestamp: new Date().toISOString(),
-            priority: priority,
-            requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            forMasterOnly: true,
-            target: 'all-masters',
-            masterCount: masterClients.size
-          });
-        });
-        
-        socket.emit('tts-complete', {
-          success: true,
-          message: `Audio telah dikirim ke ${masterClients.size} Master Controller`,
-          masterCount: masterClients.size,
-          target: 'all-masters',
-          textLength: text.length,
-          language: language,
-          duration: result.duration
-        });
-        
-      } else if (target === 'specific-master') {
-        // Kirim ke master tertentu
-        if (targetMasterId && masterClients.has(targetMasterId)) {
-          io.to(targetMasterId).emit('tts-audio', {
-            ...result,
-            fromClientId: client.id,
-            fromClientSocketId: socket.id,
-            timestamp: new Date().toISOString(),
-            priority: priority,
-            requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            forMasterOnly: true,
-            target: 'specific-master',
-            targetMasterId: targetMasterId
-          });
-          
-          socket.emit('tts-complete', {
-            success: true,
-            message: 'Audio telah dikirim ke Master Controller tertentu',
-            targetMasterId: connectedClients.get(targetMasterId)?.id,
-            textLength: text.length,
-            language: language,
-            duration: result.duration
-          });
-        } else {
-          socket.emit('tts-error', {
-            success: false,
-            error: 'Master target tidak ditemukan atau sudah terputus',
-            targetMasterId: targetMasterId
-          });
-        }
-      } else if (target === 'broadcast-all') {
-        // Broadcast ke semua client
-        io.emit('tts-audio-broadcast', {
+      // Kirim ke semua master
+      masterClients.forEach(masterSocketId => {
+        io.to(masterSocketId).emit('tts-audio', {
           ...result,
           fromClientId: client.id,
           fromClientSocketId: socket.id,
           timestamp: new Date().toISOString(),
           priority: priority,
           requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          target: 'broadcast-all',
-          forEveryone: true
+          forMasterOnly: true,
+          masterCount: masterClients.size
         });
-        
-        socket.emit('tts-complete', {
-          success: true,
-          message: 'Audio telah di-broadcast ke semua client',
-          target: 'broadcast-all',
-          textLength: text.length,
-          language: language,
-          duration: result.duration
-        });
-      }
+      });
+      
+      socket.emit('tts-complete', {
+        success: true,
+        message: `Audio telah dikirim ke ${masterClients.size} Master Controller`,
+        masterCount: masterClients.size,
+        textLength: text.length,
+        language: language,
+        duration: result.duration
+      });
       
       // Notify all clients about new TTS (except sender)
       socket.broadcast.emit('tts-notification', {
         fromClientId: client.id,
         textPreview: text.length > 50 ? text.substring(0, 50) + '...' : text,
         language: language,
-        target: target,
         timestamp: new Date().toISOString()
       });
       
@@ -544,87 +483,12 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle broadcast TTS request (client wants to send to all)
-  socket.on('tts-broadcast', async (data) => {
-    const client = connectedClients.get(socket.id);
-    const { text, language = 'id-ID', speed = 1.0 } = data;
-    
-    console.log(`[${new Date().toISOString()}] TTS Broadcast from ${client?.id}`);
-    
-    try {
-      if (!text || typeof text !== 'string' || text.trim().length === 0) {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Teks tidak valid'
-        });
-        return;
-      }
-      
-      if (text.length > 5000) {
-        socket.emit('tts-error', {
-          success: false,
-          error: `Teks terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`
-        });
-        return;
-      }
-      
-      const result = await googleTTSService.convertTextToSpeech({
-        text: text.trim(),
-        language: language,
-        speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
-      });
-      
-      // Send to all clients
-      io.emit('tts-audio-broadcast', {
-        ...result,
-        fromClientId: client.id,
-        timestamp: new Date().toISOString(),
-        requestId: `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        forEveryone: true
-      });
-      
-      socket.emit('tts-complete', {
-        success: true,
-        message: 'Audio telah di-broadcast ke semua client',
-        target: 'broadcast-all',
-        textLength: text.length
-      });
-      
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] TTS Broadcast Error for ${client?.id}:`, error.message);
-      socket.emit('tts-error', {
-        success: false,
-        error: 'Gagal mengonversi teks ke suara untuk broadcast'
-      });
-    }
-  });
-  
   // Handle client requesting to play audio (master only)
   socket.on('play-audio', (audioData) => {
     if (masterClients.has(socket.id)) {
-      const playTarget = audioData.target || 'all-clients';
-      
-      if (playTarget === 'all-clients') {
-        // Master mengirim audio ke semua client
-        io.emit('play-audio-command', {
-          ...audioData,
-          issuedBy: connectedClients.get(socket.id)?.id,
-          timestamp: new Date().toISOString(),
-          fromMaster: true,
-          masterCount: masterClients.size
-        });
-      } else if (playTarget === 'specific-client') {
-        // Master mengirim audio ke client tertentu
-        const targetSocketId = audioData.targetClientSocketId;
-        if (connectedClients.has(targetSocketId)) {
-          io.to(targetSocketId).emit('play-audio-command', {
-            ...audioData,
-            issuedBy: connectedClients.get(socket.id)?.id,
-            timestamp: new Date().toISOString(),
-            fromMaster: true
-          });
-        }
-      }
+      socket.emit('play-audio-denied', {
+        reason: 'Fitur broadcast audio tidak tersedia'
+      });
     } else {
       socket.emit('play-audio-denied', {
         reason: 'Hanya Master Controller yang dapat mengontrol pemutaran audio'
@@ -635,7 +499,8 @@ io.on('connection', (socket) => {
   // Handle client requesting to stop audio
   socket.on('stop-audio', () => {
     if (masterClients.has(socket.id)) {
-      io.emit('stop-audio-command', {
+      // Hanya berhenti di master itu sendiri
+      socket.emit('stop-audio-command', {
         issuedBy: connectedClients.get(socket.id)?.id,
         timestamp: new Date().toISOString(),
         fromMaster: true
@@ -985,9 +850,9 @@ app.get('/api/languages', (req, res) => {
 
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, language = 'id-ID', speed = 1.0, target = 'all-masters' } = req.body;
+    const { text, language = 'id-ID', speed = 1.0 } = req.body;
     
-    console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}, Target: ${target}`);
+    console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
     
     if (!text || typeof text !== 'string') {
       return res.status(400).json({
@@ -1022,37 +887,21 @@ app.post('/api/tts', async (req, res) => {
     
     // Kirim ke semua master jika ada
     if (masterClients.size > 0) {
-      if (target === 'all-masters') {
-        masterClients.forEach(masterSocketId => {
-          io.to(masterSocketId).emit('tts-audio', {
-            ...result,
-            fromClientId: 'api-request',
-            timestamp: new Date().toISOString(),
-            priority: 'high',
-            forMasterOnly: true,
-            target: 'all-masters',
-            masterCount: masterClients.size
-          });
+      masterClients.forEach(masterSocketId => {
+        io.to(masterSocketId).emit('tts-audio', {
+          ...result,
+          fromClientId: 'api-request',
+          timestamp: new Date().toISOString(),
+          priority: 'high',
+          forMasterOnly: true,
+          masterCount: masterClients.size
         });
-      } else if (target === 'specific-master' && req.body.targetMasterId) {
-        const targetMasterId = req.body.targetMasterId;
-        if (masterClients.has(targetMasterId)) {
-          io.to(targetMasterId).emit('tts-audio', {
-            ...result,
-            fromClientId: 'api-request',
-            timestamp: new Date().toISOString(),
-            priority: 'high',
-            forMasterOnly: true,
-            target: 'specific-master'
-          });
-        }
-      }
+      });
       
       res.json({
         ...result,
         totalMasters: masterClients.size,
-        clientCount: connectedClients.size,
-        target: target
+        clientCount: connectedClients.size
       });
     } else {
       res.json({
@@ -1214,8 +1063,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🌐 Frontend tersedia di: ${serverUrl}`);
   console.log(`\n🔧 Fitur: Multi-Master TTS`);
   console.log(`   • Multiple master dapat aktif bersamaan`);
-  console.log(`   • Client bisa kirim ke semua master atau master tertentu`);
-  console.log(`   • Broadcast ke semua client`);
+  console.log(`   • Client selalu kirim ke semua master`);
+  console.log(`   • Tidak ada broadcast atau spesifik master`);
   console.log(`   • Master preference disimpan di localStorage`);
   console.log(`   • Auto-reconnect saat browser di-refresh`);
   console.log(`   • Master tetap stabil setelah refresh`);
