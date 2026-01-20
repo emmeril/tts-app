@@ -127,7 +127,7 @@ function ttsApp() {
                 const saved = localStorage.getItem('ttsClientId');
                 if (saved) {
                     this.savedClientId = saved;
-                    console.log('Loaded saved client ID:', saved.substring(0, 8));
+                    // console.log('Loaded saved client ID:', saved.substring(0, 8));
                 }
             } catch (error) {
                 console.error('Failed to load client ID:', error);
@@ -153,14 +153,14 @@ function ttsApp() {
                 if (data.success && data.exists) {
                     if (data.isMaster && !this.isMaster) {
                         // Server says we're master but local state doesn't match
-                        console.log('Syncing master status: server says we are master');
+                        // console.log('Syncing master status: server says we are master');
                         this.isMaster = true;
                         this.wasMasterBeforeDisconnect = true;
                         localStorage.setItem('ttsWasMaster', 'true');
                         this.showNotification('Status Master disinkronkan dengan server', 'info');
                     } else if (!data.isMaster && this.isMaster) {
                         // Server says we're not master but local state says we are
-                        console.log('Syncing master status: server says we are NOT master');
+                        // console.log('Syncing master status: server says we are NOT master');
                         this.isMaster = false;
                         this.showNotification('Status Master diperbarui dari server', 'warning');
                     }
@@ -181,7 +181,7 @@ function ttsApp() {
             const reconnected = localStorage.getItem('ttsReconnecting') === 'true';
             if (reconnected) {
                 this.wasMasterBeforeDisconnect = localStorage.getItem('ttsWasMaster') === 'true';
-                console.log('Reconnecting, was master before:', this.wasMasterBeforeDisconnect);
+                // console.log('Reconnecting, was master before:', this.wasMasterBeforeDisconnect);
             }
             
             // Create new connection
@@ -246,7 +246,7 @@ function ttsApp() {
                 if (this.wasMasterBeforeDisconnect && !this.isMaster) {
                     setTimeout(() => {
                         if (!this.isMaster && this.wantsToBeMaster) {
-                            console.log('Auto-requesting master role after reconnect');
+                            // console.log('Auto-requesting master role after reconnect');
                             this.requestMasterRole(true);
                         }
                     }, 2000);
@@ -283,7 +283,7 @@ function ttsApp() {
                     if (this.wasMasterBeforeDisconnect) {
                         setTimeout(() => {
                             if (this.wasMasterBeforeDisconnect && !this.isMaster) {
-                                console.log('Re-requesting master role in multi-master mode');
+                                // console.log('Re-requesting master role in multi-master mode');
                                 this.requestMasterRole(true);
                             }
                         }, 2500);
