@@ -48,6 +48,7 @@ function ttsApp() {
         showMasterListModal: false,
         
         // Audio Control
+        audioEnabled: false,
         playRetryCount: 0,
         maxPlayRetries: 3,
         
@@ -59,6 +60,22 @@ function ttsApp() {
             this.loadMasterPreference();
             this.loadAudioState();
             this.loadClientId();
+            
+            // Enable audio setelah interaksi user pertama
+            document.addEventListener('click', () => {
+                this.audioEnabled = true;
+            }, { once: true });
+            
+            // Prompt untuk interaksi pertama kali
+            setTimeout(() => {
+                if (this.isMaster && !this.audioEnabled) {
+                    this.showNotification(
+                        'Sebagai Master, klik di layar untuk mengaktifkan audio otomatis',
+                        'info',
+                        true
+                    );
+                }
+            }, 2000);
             
             // Auto-reconnect jika terputus
             setInterval(() => {
