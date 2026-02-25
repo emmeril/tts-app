@@ -9,8 +9,8 @@ const googleTTSService = require('./services/googleTTSService');
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT) || 5000,
-  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL) || 25000,
+  pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT, 10) || 5000,
+  pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL, 10) || 25000,
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
@@ -18,6 +18,7 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT || 3000;
+const MAX_TTS_TEXT_LENGTH = 5000;
 
 // Middleware
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
@@ -35,7 +36,7 @@ const previousMasters = new Map(); // clientId -> { wantsToBeMaster: true, lastS
 
 // Generate unique client ID
 const generateClientId = () => {
-  return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 };
 
 // Socket.IO connection handling
@@ -234,9 +235,16 @@ io.on('connection', (socket) => {
   });
   
   // Handle request to become master
-  socket.on('request-master-role', (data) => {
+  socket.on('request-master-role', (data = {}) => {
     const client = connectedClients.get(socket.id);
     console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.id}`);
+
+    if (!client) {
+      socket.emit('master-role-denied', {
+        reason: 'Client tidak terdaftar atau koneksi sudah tidak aktif'
+      });
+      return;
+    }
     
     // Update client preference
     if (client) {
@@ -253,8 +261,8 @@ io.on('connection', (socket) => {
     // Add to masters if not already a master
     if (!masterClients.has(socket.id)) {
       masterClients.add(socket.id);
-      connectedClients.get(socket.id).isMaster = true;
-      connectedClients.get(socket.id).wantsToBeMaster = true;
+      client.isMaster = true;
+      client.wantsToBeMaster = true;
       
       socket.emit('master-role-granted', { 
         isMaster: true,
@@ -301,6 +309,7 @@ io.on('connection', (socket) => {
   // Handle release master role
   socket.on('release-master-role', (data) => {
     const client = connectedClients.get(socket.id);
+    if (!client) return;
     
     if (masterClients.has(socket.id)) {
       // Remove from masters
@@ -358,13 +367,21 @@ io.on('connection', (socket) => {
   });
   
   // Handle TTS request from clients (HANYA KE SEMUA MASTER)
-  socket.on('tts-request', async (data) => {
+  socket.on('tts-request', async (data = {}) => {
     const client = connectedClients.get(socket.id);
     const { text, language = 'id-ID', speed = 1.0, priority = 'normal' } = data;
     
     console.log(`[${new Date().toISOString()}] TTS Request from ${client?.id} to all masters: ${language}, Text Length: ${text?.length || 0}`);
     
     try {
+      if (!client) {
+        socket.emit('tts-error', {
+          success: false,
+          error: 'Client tidak valid atau koneksi sudah berakhir'
+        });
+        return;
+      }
+
       // Validasi input dengan detail
       if (!text || typeof text !== 'string') {
         socket.emit('tts-error', {
@@ -383,10 +400,10 @@ io.on('connection', (socket) => {
         return;
       }
       
-      if (text.length > 5000) {
+      if (text.length > MAX_TTS_TEXT_LENGTH) {
         socket.emit('tts-error', {
           success: false,
-          error: `Teks terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`,
+          error: `Teks terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`,
           suggestion: 'Coba bagi teks menjadi beberapa bagian'
         });
         return;
@@ -432,7 +449,7 @@ io.on('connection', (socket) => {
           fromClientSocketId: socket.id,
           timestamp: new Date().toISOString(),
           priority: priority,
-          requestId: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
           forMasterOnly: true,
           masterCount: masterClients.size
         });
@@ -484,7 +501,7 @@ io.on('connection', (socket) => {
   });
   
   // Handle client requesting to play audio (master only)
-  socket.on('play-audio', (audioData) => {
+  socket.on('play-audio', () => {
     if (masterClients.has(socket.id)) {
       socket.emit('play-audio-denied', {
         reason: 'Fitur broadcast audio tidak tersedia'
@@ -512,7 +529,7 @@ io.on('connection', (socket) => {
   socket.on('audio-status', (status) => {
     const client = connectedClients.get(socket.id);
     io.emit('client-audio-status', {
-      clientId: client.id,
+      clientId: client?.id || null,
       status: status,
       timestamp: new Date().toISOString()
     });
@@ -868,10 +885,10 @@ app.post('/api/tts', async (req, res) => {
       });
     }
     
-    if (text.length > 5000) {
+    if (text.length > MAX_TTS_TEXT_LENGTH) {
       return res.status(400).json({
         success: false,
-        error: `Text terlalu panjang (${text.length} karakter). Maksimal 5000 karakter.`
+        error: `Text terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`
       });
     }
     

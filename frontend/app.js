@@ -50,6 +50,7 @@ function ttsApp() {
         // Audio Control
         playRetryCount: 0,
         maxPlayRetries: 3,
+        intervalsInitialized: false,
         
         // Initialize
         init() {
@@ -59,39 +60,43 @@ function ttsApp() {
             this.loadMasterPreference();
             this.loadAudioState();
             this.loadClientId();
-            
-            // Auto-reconnect jika terputus
-            setInterval(() => {
-                if (!this.socket || !this.socket.connected) {
-                    this.serverStatus = 'disconnected';
-                    this.serverStatusText = 'Mencoba menyambung ulang...';
-                    this.initSocket();
-                }
-            }, 5000);
-            
-            // Send periodic ping
-            setInterval(() => {
-                if (this.socket && this.socket.connected) {
-                    this.socket.emit('ping', { 
-                        timestamp: Date.now(),
-                        wantsToBeMaster: this.wantsToBeMaster
-                    });
-                }
-            }, 30000);
-            
-            // Refresh master list setiap 10 detik
-            setInterval(() => {
-                if (this.socket && this.socket.connected) {
-                    this.refreshMasterList();
-                }
-            }, 10000);
-            
-            // Sync master status setiap 5 detik
-            setInterval(() => {
-                if (this.socket && this.socket.connected && this.clientId) {
-                    this.syncMasterStatus();
-                }
-            }, 5000);
+
+            if (!this.intervalsInitialized) {
+                // Auto-reconnect jika terputus
+                setInterval(() => {
+                    if (!this.socket || !this.socket.connected) {
+                        this.serverStatus = 'disconnected';
+                        this.serverStatusText = 'Mencoba menyambung ulang...';
+                        this.initSocket();
+                    }
+                }, 5000);
+                
+                // Send periodic ping
+                setInterval(() => {
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('ping', { 
+                            timestamp: Date.now(),
+                            wantsToBeMaster: this.wantsToBeMaster
+                        });
+                    }
+                }, 30000);
+                
+                // Refresh master list setiap 10 detik
+                setInterval(() => {
+                    if (this.socket && this.socket.connected) {
+                        this.refreshMasterList();
+                    }
+                }, 10000);
+                
+                // Sync master status setiap 5 detik
+                setInterval(() => {
+                    if (this.socket && this.socket.connected && this.clientId) {
+                        this.syncMasterStatus();
+                    }
+                }, 5000);
+
+                this.intervalsInitialized = true;
+            }
             
             // Save state before page unload
             window.addEventListener('beforeunload', () => {
@@ -284,12 +289,12 @@ function ttsApp() {
             
             this.socket.on('client-connected', (data) => {
                 this.connectedClients = data.connectedClients || [];
-                this.showNotification(`Komputer baru terhubung: ${data.clientId.substring(0, 8)}`, 'info');
+                this.showNotification(`Komputer baru terhubung: ${this.shortClientId(data.clientId)}`, 'info');
             });
             
             this.socket.on('client-disconnected', (data) => {
                 this.connectedClients = data.connectedClients || [];
-                this.showNotification(`Komputer terputus: ${data.clientId.substring(0, 8)}`, 'warning');
+                this.showNotification(`Komputer terputus: ${this.shortClientId(data.clientId)}`, 'warning');
             });
             
             this.socket.on('master-added', (data) => {
@@ -307,7 +312,7 @@ function ttsApp() {
                         this.showNotification('Anda sekarang adalah Master Controller!', 'success');
                     }
                 } else {
-                    this.showNotification(`${addedMaster.substring(0, 8)} ditambahkan sebagai Master`, 'info');
+                    this.showNotification(`${this.shortClientId(addedMaster)} ditambahkan sebagai Master`, 'info');
                 }
             });
             
@@ -320,7 +325,7 @@ function ttsApp() {
                     this.showNotification('Anda dikeluarkan dari Master Controller', 'warning');
                     // Don't clear wasMaster flag - we might want to reconnect as master
                 } else {
-                    this.showNotification(`${removedMaster.substring(0, 8)} dikeluarkan dari Master`, 'info');
+                    this.showNotification(`${this.shortClientId(removedMaster)} dikeluarkan dari Master`, 'info');
                 }
             });
             
@@ -380,9 +385,9 @@ function ttsApp() {
                 this.updateMasterList(data.masterList || []);
                 
                 if (data.wantsToBeMaster) {
-                    this.showNotification(`Master Controller terputus: ${data.disconnectedMasterId} (ingin kembali sebagai Master)`, 'warning');
+                    this.showNotification(`Master Controller terputus: ${this.shortClientId(data.disconnectedMasterId)} (ingin kembali sebagai Master)`, 'warning');
                 } else {
-                    this.showNotification(`Master Controller terputus: ${data.disconnectedMasterId}`, 'warning');
+                    this.showNotification(`Master Controller terputus: ${this.shortClientId(data.disconnectedMasterId)}`, 'warning');
                 }
             });
             
@@ -508,7 +513,7 @@ function ttsApp() {
             
             this.socket.on('tts-notification', (data) => {
                 if (data.fromClientId !== this.clientId) {
-                    this.showNotification(`${data.fromClientId} mengirim teks ke semua master: "${data.textPreview}"`, 'info');
+                    this.showNotification(`${this.shortClientId(data.fromClientId)} mengirim teks ke semua master: "${data.textPreview}"`, 'info');
                 }
             });
             
@@ -650,7 +655,7 @@ function ttsApp() {
         
         // Request master role
         requestMasterRole(autoReconnect = false) {
-            if (this.isMaster) return;
+            if (this.isMaster || !this.socket || !this.socket.connected) return;
             
             this.isRequestingMaster = true;
             this.wantsToBeMaster = true;
@@ -674,7 +679,7 @@ function ttsApp() {
         
         // Release master role
         releaseMasterRole(clearPreference = false) {
-            if (!this.isMaster) return;
+            if (!this.isMaster || !this.socket || !this.socket.connected) return;
             
             this.socket.emit('release-master-role', {
                 clearPreference: clearPreference,
@@ -695,7 +700,9 @@ function ttsApp() {
         
         // Convert text to speech (hanya ke semua master)
         async convertToSpeech() {
-            if (!this.text || !this.text.trim()) {
+            const trimmedText = this.text ? this.text.trim() : '';
+
+            if (!trimmedText) {
                 this.showNotification('Silakan masukkan teks terlebih dahulu', 'error');
                 return;
             }
@@ -705,8 +712,8 @@ function ttsApp() {
                 return;
             }
             
-            if (this.text.trim().length === 0) {
-                this.showNotification('Teks tidak boleh hanya spasi atau karakter kosong', 'error');
+            if (!this.socket || !this.socket.connected) {
+                this.showNotification('Tidak terhubung ke server. Coba sambungkan ulang.', 'error');
                 return;
             }
             
@@ -714,7 +721,7 @@ function ttsApp() {
             
             try {
                 const requestData = {
-                    text: this.text.trim(),
+                    text: trimmedText,
                     language: this.language,
                     speed: Math.max(0.5, Math.min(parseFloat(this.speed) || 1.0, 2.0)),
                     priority: this.priority,
@@ -974,6 +981,12 @@ function ttsApp() {
         },
         
         // Helper methods
+        shortClientId(clientId) {
+            return typeof clientId === 'string' && clientId.length > 0
+                ? clientId.substring(0, 8)
+                : 'unknown';
+        },
+
         updateCharCount() {
             if (!this.text) {
                 this.charCount = 0;
