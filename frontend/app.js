@@ -767,12 +767,18 @@ function ttsApp() {
                     player.id = 'masterAudioPlayer';
                     player.controls = true;
                     player.className = 'w-full rounded-lg';
+                    player.autoplay = true;
+                    player.playsInline = true;
+                    player.preload = 'auto';
                     document.body.appendChild(player);
                     audioElement = player;
                 } else {
                     let hidden = document.createElement('audio');
                     hidden.id = 'hiddenAudio';
                     hidden.className = 'hidden';
+                    hidden.autoplay = true;
+                    hidden.playsInline = true;
+                    hidden.preload = 'auto';
                     document.body.appendChild(hidden);
                     audioElement = hidden;
                 }
@@ -810,22 +816,7 @@ function ttsApp() {
                     console.error(`Play error (attempt ${retryCount + 1}):`, error);
                     
                     if (error.name === 'NotAllowedError') {
-                        this.showNotification(
-                            'Klik tombol play di player audio untuk memulai',
-                            'warning'
-                        );
-                        
-                        if (this.isMaster && audioElement) {
-                            audioElement.style.border = '3px solid #f59e0b';
-                            audioElement.style.boxShadow = '0 0 15px rgba(245, 158, 11, 0.7)';
-                            
-                            setTimeout(() => {
-                                this.showNotification(
-                                    'Audio siap! Klik tombol play di atas untuk memutar',
-                                    'info'
-                                );
-                            }, 1000);
-                        }
+                        this.tryMutedAutoplay(audioElement, retryCount);
                     } else if (error.name === 'AbortError' || error.name === 'NetworkError') {
                         if (retryCount < this.maxPlayRetries - 1) {
                             setTimeout(() => {
@@ -834,6 +825,50 @@ function ttsApp() {
                         }
                     } else {
                         this.showNotification('Gagal memutar audio', 'error');
+                    }
+                });
+            }
+        },
+
+        // Fallback autoplay untuk browser yang blokir autoplay dengan suara
+        tryMutedAutoplay(audioElement, retryCount = 0) {
+            if (!audioElement) return;
+
+            const previousMuted = audioElement.muted;
+            const previousVolume = audioElement.volume;
+
+            audioElement.muted = true;
+            audioElement.volume = 0;
+
+            const mutedPlayPromise = audioElement.play();
+            if (mutedPlayPromise !== undefined) {
+                mutedPlayPromise.then(() => {
+                    // Setelah playback dimulai dalam mode muted, aktifkan kembali suara
+                    setTimeout(() => {
+                        audioElement.muted = previousMuted;
+                        audioElement.volume = previousVolume || 1;
+                    }, 120);
+
+                    this.isPlaying = true;
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('audio-status', 'playing');
+                    }
+                    this.showNotification('Audio diputar otomatis', 'success');
+                }).catch((mutedError) => {
+                    console.error(`Muted autoplay failed (attempt ${retryCount + 1}):`, mutedError);
+
+                    audioElement.muted = previousMuted;
+                    audioElement.volume = previousVolume || 1;
+
+                    this.showNotification(
+                        'Browser memblokir autoplay. Klik tombol play sekali untuk aktivasi.',
+                        'warning',
+                        true
+                    );
+                    
+                    if (this.isMaster && audioElement) {
+                        audioElement.style.border = '3px solid #f59e0b';
+                        audioElement.style.boxShadow = '0 0 15px rgba(245, 158, 11, 0.7)';
                     }
                 });
             }
