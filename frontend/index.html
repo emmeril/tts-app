@@ -434,12 +434,14 @@
                             </div>
                         </div>
                         
-                        <!-- Audio Player untuk Master -->
+                        <!-- Audio Player untuk Master (dengan autoplay) -->
                         <div x-show="currentAudio" class="mb-4">
                             <h4 class="font-medium text-gray-900 text-sm sm:text-base mb-2">Player Audio Master:</h4>
                             <audio id="masterAudioPlayer" 
                                    :src="currentAudio?.audioUrl" 
                                    controls
+                                   autoplay
+                                   playsinline
                                    @play="onAudioPlay()"
                                    @pause="onAudioPause()"
                                    @ended="onAudioEnd()"
@@ -1335,15 +1337,13 @@
     </div>
 
     <!-- Hidden Audio Element -->
-<audio id="masterAudioPlayer" 
-       controls
-       class="w-full rounded-lg hidden"
-       :class="{ 'hidden': !isMaster }"
-       @play="onAudioPlay()"
-       @pause="onAudioPause()"
-       @ended="onAudioEnd()"
-       preload="auto"
-       playsinline>
-</audio>
+    <audio id="hiddenAudio" 
+           x-ref="hiddenAudio"
+           @play="onAudioPlay()"
+           @pause="onAudioPause()"
+           @ended="onAudioEnd()"
+           class="hidden"
+           playsinline>
+    </audio>
 </body>
 </html>
