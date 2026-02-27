@@ -1335,23 +1335,15 @@
     </div>
 
     <!-- Hidden Audio Element -->
-    <audio id="hiddenAudio" 
-           x-ref="hiddenAudio"
-           @play="onAudioPlay()"
-           @pause="onAudioPause()"
-           @ended="onAudioEnd()"
-           class="hidden"></audio>
-
-    <!-- Master Audio Player (selalu ada di DOM, disembunyikan jika bukan master) -->
-    <audio id="masterAudioPlayer" 
-           controls
-           class="w-full rounded-lg hidden"
-           :class="{ 'hidden': !isMaster }"
-           @play="onAudioPlay()"
-           @pause="onAudioPause()"
-           @ended="onAudioEnd()"
-           preload="auto"
-           playsinline>
-    </audio>
+<audio id="masterAudioPlayer" 
+       controls
+       class="w-full rounded-lg hidden"
+       :class="{ 'hidden': !isMaster }"
+       @play="onAudioPlay()"
+       @pause="onAudioPause()"
+       @ended="onAudioEnd()"
+       preload="auto"
+       playsinline>
+</audio>
 </body>
 </html>
