@@ -51,6 +51,10 @@ function ttsApp() {
         playRetryCount: 0,
         maxPlayRetries: 3,
         intervalsInitialized: false,
+        audioPrimed: false,
+        audioUnlockListenersAttached: false,
+        pendingAutoplayAudio: false,
+        silentWavDataUri: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=',
         
         // Initialize
         init() {
@@ -60,6 +64,7 @@ function ttsApp() {
             this.loadMasterPreference();
             this.loadAudioState();
             this.loadClientId();
+            this.setupAudioAutoplayBootstrap();
 
             if (!this.intervalsInitialized) {
                 // Auto-reconnect jika terputus
@@ -107,6 +112,67 @@ function ttsApp() {
             
             // Initialize socket connection
             this.initSocket();
+        },
+
+        setupAudioAutoplayBootstrap() {
+            const audioElement = this.getOrCreateAudioElement();
+            if (!audioElement) return;
+
+            audioElement.autoplay = true;
+            audioElement.playsInline = true;
+            audioElement.preload = 'auto';
+
+            if (!this.audioUnlockListenersAttached) {
+                this.audioUnlockListenersAttached = true;
+
+                const unlock = () => {
+                    this.audioPrimed = true;
+
+                    if (this.pendingAutoplayAudio && this.currentAudio?.audioUrl) {
+                        this.pendingAutoplayAudio = false;
+                        this.playAudio();
+                    }
+                };
+
+                window.addEventListener('pointerdown', unlock, { once: true, passive: true });
+                window.addEventListener('touchstart', unlock, { once: true, passive: true });
+                window.addEventListener('keydown', unlock, { once: true });
+            }
+
+            this.primeAudioElement(audioElement);
+        },
+
+        primeAudioElement(audioElement) {
+            if (!audioElement || this.audioPrimed) return;
+
+            const prevMuted = audioElement.muted;
+            const prevVolume = audioElement.volume;
+            const prevSrc = audioElement.src;
+
+            audioElement.muted = true;
+            audioElement.volume = 0;
+            audioElement.src = this.silentWavDataUri;
+
+            const primePromise = audioElement.play();
+            if (primePromise !== undefined) {
+                primePromise.then(() => {
+                    audioElement.pause();
+                    audioElement.currentTime = 0;
+                    this.audioPrimed = true;
+                }).catch(() => {
+                    // Tetap lanjut; beberapa browser butuh user gesture pertama.
+                }).finally(() => {
+                    audioElement.muted = prevMuted;
+                    audioElement.volume = prevVolume;
+
+                    if (prevSrc && prevSrc !== this.silentWavDataUri) {
+                        audioElement.src = prevSrc;
+                    } else {
+                        audioElement.removeAttribute('src');
+                    }
+                    audioElement.load();
+                });
+            }
         },
         
         // Load client ID from localStorage
@@ -752,36 +818,10 @@ function ttsApp() {
                 return;
             }
             
-            let audioElement;
-            if (this.isMaster) {
-                audioElement = document.getElementById('masterAudioPlayer');
-            } else {
-                audioElement = document.getElementById('hiddenAudio');
-            }
-            
+            const audioElement = this.getOrCreateAudioElement();
             if (!audioElement) {
                 console.error('Audio element tidak ditemukan');
-                
-                if (this.isMaster) {
-                    let player = document.createElement('audio');
-                    player.id = 'masterAudioPlayer';
-                    player.controls = true;
-                    player.className = 'w-full rounded-lg';
-                    player.autoplay = true;
-                    player.playsInline = true;
-                    player.preload = 'auto';
-                    document.body.appendChild(player);
-                    audioElement = player;
-                } else {
-                    let hidden = document.createElement('audio');
-                    hidden.id = 'hiddenAudio';
-                    hidden.className = 'hidden';
-                    hidden.autoplay = true;
-                    hidden.playsInline = true;
-                    hidden.preload = 'auto';
-                    document.body.appendChild(hidden);
-                    audioElement = hidden;
-                }
+                return;
             }
             
             audioElement.src = this.currentAudio.audioUrl;
@@ -830,6 +870,40 @@ function ttsApp() {
             }
         },
 
+        getOrCreateAudioElement() {
+            let audioElement;
+            if (this.isMaster) {
+                audioElement = document.getElementById('masterAudioPlayer');
+            } else {
+                audioElement = document.getElementById('hiddenAudio');
+            }
+
+            if (!audioElement) {
+                if (this.isMaster) {
+                    const player = document.createElement('audio');
+                    player.id = 'masterAudioPlayer';
+                    player.controls = true;
+                    player.className = 'w-full rounded-lg';
+                    player.autoplay = true;
+                    player.playsInline = true;
+                    player.preload = 'auto';
+                    document.body.appendChild(player);
+                    audioElement = player;
+                } else {
+                    const hidden = document.createElement('audio');
+                    hidden.id = 'hiddenAudio';
+                    hidden.className = 'hidden';
+                    hidden.autoplay = true;
+                    hidden.playsInline = true;
+                    hidden.preload = 'auto';
+                    document.body.appendChild(hidden);
+                    audioElement = hidden;
+                }
+            }
+
+            return audioElement;
+        },
+
         // Fallback autoplay untuk browser yang blokir autoplay dengan suara
         tryMutedAutoplay(audioElement, retryCount = 0) {
             if (!audioElement) return;
@@ -859,9 +933,10 @@ function ttsApp() {
 
                     audioElement.muted = previousMuted;
                     audioElement.volume = previousVolume || 1;
+                    this.pendingAutoplayAudio = true;
 
                     this.showNotification(
-                        'Browser memblokir autoplay. Klik tombol play sekali untuk aktivasi.',
+                        'Browser memblokir autoplay awal. Audio akan diputar setelah interaksi pertama di halaman.',
                         'warning',
                         true
                     );
