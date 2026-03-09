@@ -438,9 +438,7 @@
                         <div x-show="currentAudio" class="mb-4">
                             <h4 class="font-medium text-gray-900 text-sm sm:text-base mb-2">Player Audio Master:</h4>
                             <audio id="masterAudioPlayer" 
-                                   :src="currentAudio?.audioUrl" 
                                    controls
-                                   autoplay
                                    playsinline
                                    @play="onAudioPlay()"
                                    @pause="onAudioPause()"

@@ -54,6 +54,7 @@ function ttsApp() {
         audioPrimed: false,
         audioUnlockListenersAttached: false,
         pendingAutoplayAudio: false,
+        lastHandledRequestId: null,
         silentWavDataUri: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=',
         
         // Initialize
@@ -482,6 +483,13 @@ function ttsApp() {
             this.socket.on('tts-audio', (data) => {
                 // Hanya Master yang memproses audio ini
                 if (this.isMaster) {
+                    if (data.requestId && data.requestId === this.lastHandledRequestId) {
+                        console.warn('Duplicate tts-audio ignored:', data.requestId);
+                        return;
+                    }
+
+                    this.lastHandledRequestId = data.requestId || null;
+
                     // Store the audio data
                     this.currentAudio = data;
                     this.saveAudioState();
@@ -825,6 +833,13 @@ function ttsApp() {
                 console.error('Audio element tidak ditemukan');
                 return;
             }
+
+            this.pendingAutoplayAudio = false;
+            audioElement.pause();
+            audioElement.currentTime = 0;
+            audioElement.onplay = null;
+            audioElement.onpause = null;
+            audioElement.onended = null;
             
             audioElement.src = this.currentAudio.audioUrl;
             audioElement.load();
@@ -1038,8 +1053,17 @@ function ttsApp() {
         
         // Clear audio
         clearAudio() {
+            const audioElement = this.getOrCreateAudioElement();
+            if (audioElement) {
+                audioElement.pause();
+                audioElement.currentTime = 0;
+                audioElement.removeAttribute('src');
+                audioElement.load();
+            }
+
             this.currentAudio = null;
             this.isPlaying = false;
+            this.lastHandledRequestId = null;
             this.clearAudioState();
         },
         
