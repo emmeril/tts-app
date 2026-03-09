@@ -39,6 +39,98 @@ const generateClientId = () => {
   return `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 };
 
+const generateRequestId = () => {
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+};
+
+const getMasterListSnapshot = () => {
+  return Array.from(masterClients).map((sid) => ({
+    id: connectedClients.get(sid)?.id,
+    socketId: sid
+  }));
+};
+
+const promotePreviousMasterRecord = (currentClientId, previousClientId) => {
+  if (!previousClientId || previousClientId === currentClientId) {
+    return;
+  }
+
+  const previousRecord = previousMasters.get(previousClientId);
+  if (!previousRecord) {
+    return;
+  }
+
+  previousMasters.set(currentClientId, {
+    ...previousRecord,
+    migratedFrom: previousClientId,
+    lastSeen: new Date()
+  });
+  previousMasters.delete(previousClientId);
+};
+
+const emitTtsAudioToMasters = (result, request) => {
+  const requestId = generateRequestId();
+
+  masterClients.forEach((masterSocketId) => {
+    io.to(masterSocketId).emit('tts-audio', {
+      ...result,
+      fromClientId: request.fromClientId,
+      fromClientSocketId: request.fromClientSocketId || null,
+      timestamp: new Date().toISOString(),
+      priority: request.priority || 'normal',
+      requestId,
+      forMasterOnly: true,
+      masterCount: masterClients.size
+    });
+  });
+};
+
+const processQueuedMasterRequests = async () => {
+  if (masterClients.size === 0 || masterRequestQueue.length === 0) {
+    return;
+  }
+
+  const queuedRequests = masterRequestQueue.splice(0, masterRequestQueue.length);
+  console.log(`Processing ${queuedRequests.length} queued TTS requests for ${masterClients.size} masters`);
+
+  for (const request of queuedRequests) {
+    try {
+      const result = await googleTTSService.convertTextToSpeech({
+        text: request.text,
+        language: request.language || 'id-ID',
+        speed: Math.max(0.5, Math.min(parseFloat(request.speed) || 1.0, 2.0))
+      });
+
+      emitTtsAudioToMasters(result, request);
+
+      if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
+        io.to(request.fromClientSocketId).emit('tts-complete', {
+          success: true,
+          message: `Audio antrian telah dikirim ke ${masterClients.size} Master Controller`,
+          masterCount: masterClients.size,
+          textLength: request.text.length,
+          language: request.language || 'id-ID',
+          duration: result.duration,
+          queued: true
+        });
+      }
+    } catch (error) {
+      console.error(
+        `[${new Date().toISOString()}] Failed to process queued TTS request from ${request.fromClientId}:`,
+        error.message
+      );
+
+      if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
+        io.to(request.fromClientSocketId).emit('tts-error', {
+          success: false,
+          error: `Gagal memproses antrian TTS (Detail: ${error.message})`,
+          queued: true
+        });
+      }
+    }
+  }
+};
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   const clientId = generateClientId();
@@ -98,10 +190,7 @@ io.on('connection', (socket) => {
   // Send master list to new client
   if (masterClients.size > 0) {
     socket.emit('master-list-updated', {
-      masterList: Array.from(masterClients).map(sid => ({
-        id: connectedClients.get(sid)?.id,
-        socketId: sid
-      })),
+      masterList: getMasterListSnapshot(),
       totalMasters: masterClients.size
     });
   }
@@ -116,6 +205,7 @@ io.on('connection', (socket) => {
       // Store previous client ID for reconnection
       if (info.savedClientId) {
         client.previousClientId = info.savedClientId;
+        promotePreviousMasterRecord(client.id, info.savedClientId);
       }
       
       // Store if client wants to be master
@@ -161,10 +251,7 @@ io.on('connection', (socket) => {
                 masterSocketId: socket.id,
                 timestamp: new Date().toISOString(),
                 totalMasters: masterClients.size,
-                masterList: Array.from(masterClients).map(sid => ({
-                  id: connectedClients.get(sid)?.id,
-                  socketId: sid
-                })),
+                masterList: getMasterListSnapshot(),
                 reason: 'auto-reconnect-was-master'
               });
               
@@ -191,10 +278,7 @@ io.on('connection', (socket) => {
                 masterSocketId: socket.id,
                 timestamp: new Date().toISOString(),
                 totalMasters: masterClients.size,
-                masterList: Array.from(masterClients).map(sid => ({
-                  id: connectedClients.get(sid)?.id,
-                  socketId: sid
-                })),
+                masterList: getMasterListSnapshot(),
                 reason: 'auto-reconnect-no-masters'
               });
               
@@ -223,10 +307,7 @@ io.on('connection', (socket) => {
             masterSocketId: socket.id,
             timestamp: new Date().toISOString(),
             totalMasters: masterClients.size,
-            masterList: Array.from(masterClients).map(sid => ({
-              id: connectedClients.get(sid)?.id,
-              socketId: sid
-            })),
+            masterList: getMasterListSnapshot(),
             reason: 'auto-reconnect-requested'
           });
         }
@@ -235,7 +316,7 @@ io.on('connection', (socket) => {
   });
   
   // Handle request to become master
-  socket.on('request-master-role', (data = {}) => {
+  socket.on('request-master-role', async (data = {}) => {
     const client = connectedClients.get(socket.id);
     console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.id}`);
 
@@ -277,25 +358,14 @@ io.on('connection', (socket) => {
         masterSocketId: socket.id,
         timestamp: new Date().toISOString(),
         totalMasters: masterClients.size,
-        masterList: Array.from(masterClients).map(sid => ({
-          id: connectedClients.get(sid)?.id,
-          socketId: sid
-        })),
+        masterList: getMasterListSnapshot(),
         reason: 'manual-request'
       });
       
       console.log(`[${new Date().toISOString()}] Client ${client.id} added to masters. Total: ${masterClients.size}`);
       
-      // Process any pending master requests
       if (masterRequestQueue.length > 0) {
-        console.log(`Processing ${masterRequestQueue.length} pending requests for ${masterClients.size} masters`);
-        masterRequestQueue.forEach(request => {
-          // Send to all masters
-          masterClients.forEach(masterSocketId => {
-            io.to(masterSocketId).emit('tts-request', request);
-          });
-        });
-        masterRequestQueue = [];
+        await processQueuedMasterRequests();
       }
     } else {
       // Already a master
@@ -334,10 +404,7 @@ io.on('connection', (socket) => {
         removedMasterId: client.id,
         timestamp: new Date().toISOString(),
         totalMasters: masterClients.size,
-        masterList: Array.from(masterClients).map(sid => ({
-          id: connectedClients.get(sid)?.id,
-          socketId: sid
-        }))
+        masterList: getMasterListSnapshot()
       });
       
       socket.emit('master-role-released', {
@@ -415,6 +482,7 @@ io.on('connection', (socket) => {
           ...data,
           text: trimmedText,
           fromClientId: client.id,
+          fromClientSocketId: socket.id,
           timestamp: new Date().toISOString(),
           priority: priority
         });
@@ -449,7 +517,7 @@ io.on('connection', (socket) => {
           fromClientSocketId: socket.id,
           timestamp: new Date().toISOString(),
           priority: priority,
-          requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+          requestId: generateRequestId(),
           forMasterOnly: true,
           masterCount: masterClients.size
         });
@@ -575,10 +643,7 @@ io.on('connection', (socket) => {
         wasMaster: wasMaster,
         timestamp: new Date().toISOString(),
         totalMasters: masterClients.size,
-        masterList: Array.from(masterClients).map(sid => ({
-          id: connectedClients.get(sid)?.id,
-          socketId: sid
-        })),
+        masterList: getMasterListSnapshot(),
         message: 'Master Controller terputus.'
       });
       
@@ -635,7 +700,7 @@ setInterval(() => {
       }
       
       connectedClients.delete(socketId);
-      io.to(socketId).disconnect(true);
+      io.in(socketId).disconnectSockets(true);
     }
   });
 }, 60 * 1000); // Check every minute
@@ -745,11 +810,12 @@ app.post('/api/add-master', (req, res) => {
       masterSocketId: targetSocketId,
       timestamp: new Date().toISOString(),
       totalMasters: masterClients.size,
-      masterList: Array.from(masterClients).map(sid => ({
-        id: connectedClients.get(sid)?.id,
-        socketId: sid
-      })),
+      masterList: getMasterListSnapshot(),
       addedBy: 'api'
+    });
+
+    processQueuedMasterRequests().catch((error) => {
+      console.error(`[${new Date().toISOString()}] Failed to process queued requests after API add-master:`, error.message);
     });
     
     res.json({
@@ -815,10 +881,7 @@ app.post('/api/remove-master', (req, res) => {
       removedMasterId: clientId,
       timestamp: new Date().toISOString(),
       totalMasters: masterClients.size,
-      masterList: Array.from(masterClients).map(sid => ({
-        id: connectedClients.get(sid)?.id,
-        socketId: sid
-      })),
+      masterList: getMasterListSnapshot(),
       removedBy: 'api'
     });
     

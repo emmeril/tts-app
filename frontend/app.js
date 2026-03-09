@@ -437,7 +437,8 @@ function ttsApp() {
                     this.saveMasterPreference();
                     localStorage.removeItem('ttsWasMaster');
                 } else {
-                    // Keep wasMaster flag if preference not cleared
+                    // Preference tetap aktif, tetapi role master tidak dipulihkan otomatis.
+                    this.saveMasterPreference();
                     localStorage.setItem('ttsWasMaster', 'false');
                 }
                 
@@ -759,7 +760,8 @@ function ttsApp() {
                 this.wasMasterBeforeDisconnect = false;
                 this.clearMasterPreference();
             } else {
-                this.wasMasterBeforeDisconnect = true;
+                this.wasMasterBeforeDisconnect = false;
+                this.saveMasterPreference();
                 localStorage.setItem('ttsWasMaster', 'false');
             }
         },

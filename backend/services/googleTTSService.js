@@ -87,29 +87,51 @@ class GoogleTTSService {
   }
 
   /**
-   * Truncate text jika terlalu panjang
+   * Google Translate TTS membatasi panjang request per chunk.
+   * Pecah teks panjang menjadi beberapa bagian agar seluruh teks tetap diproses.
    */
-  truncateText(text, maxLength = 200) {
-    if (text.length <= maxLength) return text;
-    
-    let truncated = text.substring(0, maxLength);
-    
-    const sentenceEnd = truncated.lastIndexOf('. ');
-    const questionEnd = truncated.lastIndexOf('? ');
-    const exclamationEnd = truncated.lastIndexOf('! ');
-    
-    const bestEnd = Math.max(sentenceEnd, questionEnd, exclamationEnd);
-    
-    if (bestEnd > maxLength * 0.6) {
-      truncated = truncated.substring(0, bestEnd + 1);
-    } else {
-      const lastSpace = truncated.lastIndexOf(' ');
-      if (lastSpace > maxLength * 0.4) {
-        truncated = truncated.substring(0, lastSpace);
-      }
+  splitTextIntoChunks(text, maxLength = 200) {
+    if (text.length <= maxLength) {
+      return [text];
     }
-    
-    return truncated + (truncated.endsWith('.') ? '' : '.') + '..';
+
+    const chunks = [];
+    let remaining = text.trim();
+
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLength) {
+        chunks.push(remaining);
+        break;
+      }
+
+      let splitIndex = -1;
+      const candidate = remaining.slice(0, maxLength + 1);
+      const punctuationMatches = [...candidate.matchAll(/[.!?;:](?=\s|$)/g)];
+
+      if (punctuationMatches.length > 0) {
+        const lastMatch = punctuationMatches[punctuationMatches.length - 1];
+        if (lastMatch.index >= Math.floor(maxLength * 0.5)) {
+          splitIndex = lastMatch.index + 1;
+        }
+      }
+
+      if (splitIndex === -1) {
+        splitIndex = candidate.lastIndexOf(' ');
+      }
+
+      if (splitIndex <= 0) {
+        splitIndex = maxLength;
+      }
+
+      const chunk = remaining.slice(0, splitIndex).trim();
+      if (chunk) {
+        chunks.push(chunk);
+      }
+
+      remaining = remaining.slice(splitIndex).trim();
+    }
+
+    return chunks;
   }
 
   /**
@@ -160,84 +182,92 @@ class GoogleTTSService {
       // Optimasi teks
       const optimizedText = this.optimizeTextForSpeech(text);
       
-      // Truncate text jika terlalu panjang
-      const truncatedText = this.truncateText(optimizedText, 200);
+      const textChunks = this.splitTextIntoChunks(optimizedText, 200);
       
       // Map language code
       const langCode = this.mapLanguageCode(language);
       
-      // Parameter default Google TTS
-      const params = new URLSearchParams({
-        ie: 'UTF-8',
-        tl: langCode,
-        client: 'tw-ob',
-        q: truncatedText,
-        ttsspeed: speed.toString(),
-      });
-      
-      const ttsUrl = `${this.baseUrl}?${params.toString()}`;
-      
-      console.log(`[${new Date().toISOString()}] Google TTS Request: ${langCode}, Length: ${truncatedText.length}, Speed: ${speed}`);
-      
       // Konfigurasi request
       const maxSizeMB = parseInt(process.env.MAX_AUDIO_SIZE_MB) || 2;
       const maxSizeBytes = maxSizeMB * 1024 * 1024;
-      
+
+      console.log(
+        `[${new Date().toISOString()}] Google TTS Request: ${langCode}, Chunks: ${textChunks.length}, Length: ${optimizedText.length}, Speed: ${speed}`
+      );
       console.log(`Axios Config: maxContentLength=${maxSizeBytes} bytes (${maxSizeMB} MB)`);
-      
-      // Request ke Google TTS
-      const response = await axios.get(ttsUrl, {
-        responseType: 'arraybuffer',
-        timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000,
-        headers: {
-          ...this.defaultHeaders,
-          'Accept-Encoding': 'identity',
-          'Accept': 'audio/mpeg, audio/*',
-        },
-        maxContentLength: maxSizeBytes,
-        maxBodyLength: maxSizeBytes,
-        maxRedirects: 5,
-        decompress: true,
-        validateStatus: function (status) {
-          return status >= 200 && status < 300;
+
+      const audioBuffers = [];
+      for (const [index, chunk] of textChunks.entries()) {
+        const params = new URLSearchParams({
+          ie: 'UTF-8',
+          tl: langCode,
+          client: 'tw-ob',
+          q: chunk,
+          ttsspeed: speed.toString(),
+        });
+
+        const ttsUrl = `${this.baseUrl}?${params.toString()}`;
+        const response = await axios.get(ttsUrl, {
+          responseType: 'arraybuffer',
+          timeout: parseInt(process.env.REQUEST_TIMEOUT) || 40000,
+          headers: {
+            ...this.defaultHeaders,
+            'Accept-Encoding': 'identity',
+            'Accept': 'audio/mpeg, audio/*',
+          },
+          maxContentLength: maxSizeBytes,
+          maxBodyLength: maxSizeBytes,
+          maxRedirects: 5,
+          decompress: true,
+          validateStatus: function (status) {
+            return status >= 200 && status < 300;
+          }
+        });
+
+        console.log(
+          `Chunk ${index + 1}/${textChunks.length} status=${response.status} size=${response.data?.length || 0} bytes length=${chunk.length}`
+        );
+
+        if (!response.data || response.data.length === 0) {
+          throw new Error(`Google TTS tidak mengembalikan data audio untuk chunk ${index + 1}`);
         }
-      });
-      
-      console.log(`Response Status: ${response.status}, Content-Type: ${response.headers['content-type']}, Size: ${response.data?.length || 0} bytes`);
-      
-      // Validasi response
-      if (!response.data || response.data.length === 0) {
-        throw new Error('Google TTS tidak mengembalikan data audio');
+
+        audioBuffers.push(Buffer.from(response.data));
       }
-      
-      if (response.data.length > maxSizeBytes) {
-        console.warn(`Audio size ${response.data.length} bytes exceeds limit ${maxSizeBytes} bytes`);
+
+      const mergedAudioBuffer = Buffer.concat(audioBuffers);
+
+      if (mergedAudioBuffer.length > maxSizeBytes * textChunks.length) {
+        console.warn(
+          `Audio size ${mergedAudioBuffer.length} bytes exceeds expected combined limit ${maxSizeBytes * textChunks.length} bytes`
+        );
       }
       
       // Cek format audio
       const audioFormat = 'audio/mp3'; // Google TTS default format
       
       // Konversi ke base64
-      const audioBase64 = Buffer.from(response.data).toString('base64');
+      const audioBase64 = mergedAudioBuffer.toString('base64');
       const audioDataUrl = `data:${audioFormat};base64,${audioBase64}`;
       
       // Hitung durasi estimasi
-      const duration = this.estimateDuration(truncatedText, speed);
+      const duration = this.estimateDuration(optimizedText, speed);
       
       return {
         success: true,
         audioUrl: audioDataUrl,
         duration: duration,
-        textLength: truncatedText.length,
+        textLength: optimizedText.length,
         originalTextLength: text.length,
         language: language,
         languageCode: langCode,
         speed: speed,
         format: audioFormat,
-        truncated: truncatedText.length < text.length,
+        truncated: false,
         optimized: optimizedText !== text,
         timestamp: new Date().toISOString(),
-        audioSize: response.data.length
+        audioSize: mergedAudioBuffer.length,
+        chunkCount: textChunks.length
       };
       
     } catch (error) {
