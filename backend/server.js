@@ -43,6 +43,66 @@ const generateRequestId = () => {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 };
 
+const logInfo = (message) => {
+  console.log(`[${new Date().toISOString()}] ${message}`);
+};
+
+const logError = (message, error) => {
+  if (error !== undefined) {
+    console.error(`[${new Date().toISOString()}] ${message}`, error);
+    return;
+  }
+
+  console.error(`[${new Date().toISOString()}] ${message}`);
+};
+
+const sendApiError = (res, statusCode, error, extras = {}) => {
+  return res.status(statusCode).json({
+    success: false,
+    error,
+    timestamp: new Date().toISOString(),
+    ...extras
+  });
+};
+
+const emitSocketError = (socket, eventName, error, extras = {}) => {
+  socket.emit(eventName, {
+    success: false,
+    error,
+    timestamp: new Date().toISOString(),
+    ...extras
+  });
+};
+
+const normalizeSpeed = (speed) => {
+  return Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0));
+};
+
+const toBoolean = (value) => {
+  return value === true || value === 'true' || value === 1 || value === '1';
+};
+
+const findClientRecordById = (clientId) => {
+  for (const [socketId, client] of connectedClients.entries()) {
+    if (client.id === clientId) {
+      return { socketId, client };
+    }
+  }
+
+  return null;
+};
+
+const getConnectedClientsSnapshot = () => {
+  return Array.from(connectedClients.values()).map((client) => ({
+    id: client.id,
+    isMaster: client.isMaster,
+    joinedAt: client.joinedAt,
+    lastActivity: client.lastActivity,
+    clientInfo: client.clientInfo,
+    wantsToBeMaster: client.wantsToBeMaster
+  }));
+};
+
 const getMasterListSnapshot = () => {
   return Array.from(masterClients).map((sid) => ({
     id: connectedClients.get(sid)?.id,
@@ -91,14 +151,14 @@ const processQueuedMasterRequests = async () => {
   }
 
   const queuedRequests = masterRequestQueue.splice(0, masterRequestQueue.length);
-  console.log(`Processing ${queuedRequests.length} queued TTS requests for ${masterClients.size} masters`);
+  logInfo(`Processing queued TTS requests: count=${queuedRequests.length}, masters=${masterClients.size}`);
 
   for (const request of queuedRequests) {
     try {
       const result = await googleTTSService.convertTextToSpeech({
         text: request.text,
         language: request.language || 'id-ID',
-        speed: Math.max(0.5, Math.min(parseFloat(request.speed) || 1.0, 2.0))
+        speed: normalizeSpeed(request.speed)
       });
 
       emitTtsAudioToMasters(result, request);
@@ -115,15 +175,10 @@ const processQueuedMasterRequests = async () => {
         });
       }
     } catch (error) {
-      console.error(
-        `[${new Date().toISOString()}] Failed to process queued TTS request from ${request.fromClientId}:`,
-        error.message
-      );
+      logError(`Failed to process queued TTS request from ${request.fromClientId}`, error.message);
 
       if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
-        io.to(request.fromClientSocketId).emit('tts-error', {
-          success: false,
-          error: `Gagal memproses antrian TTS (Detail: ${error.message})`,
+        emitSocketError(io.to(request.fromClientSocketId), 'tts-error', `Gagal memproses antrian TTS (Detail: ${error.message})`, {
           queued: true
         });
       }
@@ -134,7 +189,7 @@ const processQueuedMasterRequests = async () => {
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   const clientId = generateClientId();
-  console.log(`[${new Date().toISOString()}] Client connected: ${clientId} (Socket: ${socket.id})`);
+  logInfo(`Client connected: ${clientId} (socket=${socket.id})`);
   
   // Store client information
   connectedClients.set(socket.id, {
@@ -168,12 +223,7 @@ io.on('connection', (socket) => {
       id: connectedClients.get(sid)?.id,
       socketId: sid
     })),
-    connectedClients: Array.from(connectedClients.values()).map(client => ({
-      id: client.id,
-      isMaster: client.isMaster,
-      joinedAt: client.joinedAt,
-      wantsToBeMaster: client.wantsToBeMaster
-    }))
+    connectedClients: getConnectedClientsSnapshot()
   });
   
   // Notify other clients about new connection
@@ -210,24 +260,24 @@ io.on('connection', (socket) => {
       
       // Store if client wants to be master
       if (info.wantsToBeMaster !== undefined) {
-        client.wantsToBeMaster = info.wantsToBeMaster;
-        console.log(`Client ${client.id} wantsToBeMaster: ${info.wantsToBeMaster}`);
+        client.wantsToBeMaster = toBoolean(info.wantsToBeMaster);
+        logInfo(`Client ${client.id} wantsToBeMaster=${client.wantsToBeMaster}`);
         
         // Track this preference for future reconnections
         previousMasters.set(client.id, {
-          wantsToBeMaster: info.wantsToBeMaster,
-          wasMaster: info.wasMaster || false,
+          wantsToBeMaster: client.wantsToBeMaster,
+          wasMaster: toBoolean(info.wasMaster),
           lastSeen: new Date()
         });
       }
       
       // Check if reconnecting client wants to be master and was master
-      if (info.reconnected && info.wantsToBeMaster) {
-        console.log(`Reconnecting client ${client.id} wants master. Was master: ${info.wasMaster}`);
+      if (toBoolean(info.reconnected) && client.wantsToBeMaster) {
+        logInfo(`Reconnect request from ${client.id}: wantsMaster=${client.wantsToBeMaster}, wasMaster=${toBoolean(info.wasMaster)}`);
         
-        if (info.wasMaster) {
+        if (toBoolean(info.wasMaster)) {
           // This client was a master before disconnection
-          console.log(`Client ${client.id} was previously a master, restoring role...`);
+          logInfo(`Restoring previous master role for ${client.id}`);
           
           // Check if there are other masters
           if (masterClients.size > 0) {
@@ -255,7 +305,7 @@ io.on('connection', (socket) => {
                 reason: 'auto-reconnect-was-master'
               });
               
-              console.log(`[${new Date().toISOString()}] Restored master role to ${client.id} in multi-master mode`);
+              logInfo(`Restored master role for ${client.id} in multi-master mode`);
             }
           } else {
             // No masters currently, restore this client as master
@@ -282,12 +332,12 @@ io.on('connection', (socket) => {
                 reason: 'auto-reconnect-no-masters'
               });
               
-              console.log(`[${new Date().toISOString()}] Restored master role to ${client.id} (first master)`);
+              logInfo(`Restored master role for ${client.id} as first active master`);
             }
           }
         } else if (masterClients.size === 0) {
           // Client wants to be master and no masters available
-          console.log(`Granting master to ${client.id} (no masters available)`);
+          logInfo(`Granting master to ${client.id} because no masters are active`);
           
           masterClients.add(socket.id);
           client.isMaster = true;
@@ -318,10 +368,10 @@ io.on('connection', (socket) => {
   // Handle request to become master
   socket.on('request-master-role', async (data = {}) => {
     const client = connectedClients.get(socket.id);
-    console.log(`[${new Date().toISOString()}] Master role requested by: ${client?.id}`);
+    logInfo(`Master role requested by ${client?.id || socket.id}`);
 
     if (!client) {
-      socket.emit('master-role-denied', {
+      emitSocketError(socket, 'master-role-denied', 'Client tidak terdaftar atau koneksi sudah tidak aktif', {
         reason: 'Client tidak terdaftar atau koneksi sudah tidak aktif'
       });
       return;
@@ -329,11 +379,11 @@ io.on('connection', (socket) => {
     
     // Update client preference
     if (client) {
-      client.wantsToBeMaster = data.wantsToBeMaster || false;
+      client.wantsToBeMaster = toBoolean(data.wantsToBeMaster);
       
       // Track preference for reconnection
       previousMasters.set(client.id, {
-        wantsToBeMaster: data.wantsToBeMaster || false,
+        wantsToBeMaster: client.wantsToBeMaster,
         wasMaster: true,
         lastSeen: new Date()
       });
@@ -362,14 +412,14 @@ io.on('connection', (socket) => {
         reason: 'manual-request'
       });
       
-      console.log(`[${new Date().toISOString()}] Client ${client.id} added to masters. Total: ${masterClients.size}`);
+      logInfo(`Client ${client.id} added to masters: total=${masterClients.size}`);
       
       if (masterRequestQueue.length > 0) {
         await processQueuedMasterRequests();
       }
     } else {
       // Already a master
-      socket.emit('master-role-duplicate', {
+      emitSocketError(socket, 'master-role-duplicate', 'Anda sudah menjadi Master Controller', {
         message: 'Anda sudah menjadi Master Controller',
         totalMasters: masterClients.size
       });
@@ -387,7 +437,7 @@ io.on('connection', (socket) => {
       client.isMaster = false;
       
       // Update preference if specified
-      if (data && data.clearPreference) {
+      if (data && toBoolean(data.clearPreference)) {
         client.wantsToBeMaster = false;
         // Remove from previous masters tracking
         previousMasters.delete(client.id);
@@ -411,10 +461,10 @@ io.on('connection', (socket) => {
         isMaster: false,
         message: 'Anda telah melepaskan peran master',
         totalMasters: masterClients.size,
-        preferenceCleared: data ? data.clearPreference : false
+        preferenceCleared: data ? toBoolean(data.clearPreference) : false
       });
       
-      console.log(`[${new Date().toISOString()}] Client ${client.id} removed from masters. Total: ${masterClients.size}`);
+      logInfo(`Client ${client.id} removed from masters: total=${masterClients.size}`);
     }
   });
   
@@ -438,39 +488,28 @@ io.on('connection', (socket) => {
     const client = connectedClients.get(socket.id);
     const { text, language = 'id-ID', speed = 1.0, priority = 'normal' } = data;
     
-    console.log(`[${new Date().toISOString()}] TTS Request from ${client?.id} to all masters: ${language}, Text Length: ${text?.length || 0}`);
+    logInfo(`TTS request from ${client?.id || socket.id}: language=${language}, textLength=${text?.length || 0}`);
     
     try {
       if (!client) {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Client tidak valid atau koneksi sudah berakhir'
-        });
+        emitSocketError(socket, 'tts-error', 'Client tidak valid atau koneksi sudah berakhir');
         return;
       }
 
       // Validasi input dengan detail
       if (!text || typeof text !== 'string') {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Teks harus berupa string'
-        });
+        emitSocketError(socket, 'tts-error', 'Teks harus berupa string');
         return;
       }
       
       const trimmedText = text.trim();
       if (trimmedText.length === 0) {
-        socket.emit('tts-error', {
-          success: false,
-          error: 'Teks tidak boleh kosong atau hanya spasi'
-        });
+        emitSocketError(socket, 'tts-error', 'Teks tidak boleh kosong atau hanya spasi');
         return;
       }
       
       if (text.length > MAX_TTS_TEXT_LENGTH) {
-        socket.emit('tts-error', {
-          success: false,
-          error: `Teks terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`,
+        emitSocketError(socket, 'tts-error', `Teks terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`, {
           suggestion: 'Coba bagi teks menjadi beberapa bagian'
         });
         return;
@@ -506,7 +545,7 @@ io.on('connection', (socket) => {
       const result = await googleTTSService.convertTextToSpeech({
         text: trimmedText,
         language: language,
-        speed: Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0))
+        speed: normalizeSpeed(speed)
       });
       
       // Kirim ke semua master
@@ -541,7 +580,7 @@ io.on('connection', (socket) => {
       });
       
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] TTS Error for ${client?.id}:`, error.message);
+      logError(`TTS error for ${client?.id || socket.id}`, error.message);
       
       let userMessage = 'Gagal mengonversi teks ke suara';
       let suggestion = 'Coba gunakan teks yang lebih pendek atau bahasa lain';
@@ -560,10 +599,8 @@ io.on('connection', (socket) => {
         suggestion = 'Coba bagi teks menjadi beberapa bagian (maksimal 5000 karakter)';
       }
       
-      socket.emit('tts-error', {
-        success: false,
-        error: `${userMessage} (Detail: ${error.message})`,
-        suggestion: suggestion
+      emitSocketError(socket, 'tts-error', `${userMessage} (Detail: ${error.message})`, {
+        suggestion
       });
     }
   });
@@ -571,11 +608,11 @@ io.on('connection', (socket) => {
   // Handle client requesting to play audio (master only)
   socket.on('play-audio', () => {
     if (masterClients.has(socket.id)) {
-      socket.emit('play-audio-denied', {
+      emitSocketError(socket, 'play-audio-denied', 'Fitur broadcast audio tidak tersedia', {
         reason: 'Fitur broadcast audio tidak tersedia'
       });
     } else {
-      socket.emit('play-audio-denied', {
+      emitSocketError(socket, 'play-audio-denied', 'Hanya Master Controller yang dapat mengontrol pemutaran audio', {
         reason: 'Hanya Master Controller yang dapat mengontrol pemutaran audio'
       });
     }
@@ -620,7 +657,7 @@ io.on('connection', (socket) => {
   // Handle disconnect with auto-reconnect data
   socket.on('disconnect', (reason) => {
     const client = connectedClients.get(socket.id);
-    console.log(`[${new Date().toISOString()}] Client disconnected: ${client?.id || socket.id} - Reason: ${reason}`);
+    logInfo(`Client disconnected: ${client?.id || socket.id}, reason=${reason}`);
     
     // Save master preference for reconnection
     if (client && client.wantsToBeMaster) {
@@ -677,7 +714,7 @@ io.on('connection', (socket) => {
   
   // Handle errors
   socket.on('error', (error) => {
-    console.error(`[${new Date().toISOString()}] Socket error for ${clientId}:`, error);
+    logError(`Socket error for ${clientId}`, error);
   });
 });
 
@@ -688,7 +725,7 @@ setInterval(() => {
   
   connectedClients.forEach((client, socketId) => {
     if (now - client.lastActivity > inactiveThreshold) {
-      console.log(`[${new Date().toISOString()}] Removing inactive client: ${client.id}`);
+      logInfo(`Removing inactive client: ${client.id}`);
       
       if (masterClients.has(socketId)) {
         masterClients.delete(socketId);
@@ -721,21 +758,12 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/clients', (req, res) => {
-  const clients = Array.from(connectedClients.values()).map(client => ({
-    id: client.id,
-    isMaster: client.isMaster,
-    joinedAt: client.joinedAt,
-    lastActivity: client.lastActivity,
-    clientInfo: client.clientInfo,
-    wantsToBeMaster: client.wantsToBeMaster
-  }));
-  
   res.json({
     success: true,
     totalClients: connectedClients.size,
     totalMasters: masterClients.size,
     pendingRequests: masterRequestQueue.length,
-    clients: clients
+    clients: getConnectedClientsSnapshot()
   });
 });
 
@@ -762,32 +790,21 @@ app.post('/api/add-master', (req, res) => {
   const { clientId } = req.body;
   
   if (!clientId) {
-    return res.status(400).json({
-      success: false,
-      error: 'clientId diperlukan'
-    });
+    return sendApiError(res, 400, 'clientId diperlukan');
   }
   
   // Find client by ID
-  let targetSocketId = null;
-  connectedClients.forEach((client, socketId) => {
-    if (client.id === clientId) {
-      targetSocketId = socketId;
-    }
-  });
-  
-  if (!targetSocketId) {
-    return res.status(404).json({
-      success: false,
-      error: 'Client tidak ditemukan'
-    });
+  const targetClient = findClientRecordById(clientId);
+
+  if (!targetClient) {
+    return sendApiError(res, 404, 'Client tidak ditemukan');
   }
   
   // Add to masters if not already a master
-  if (!masterClients.has(targetSocketId)) {
-    masterClients.add(targetSocketId);
-    connectedClients.get(targetSocketId).isMaster = true;
-    connectedClients.get(targetSocketId).wantsToBeMaster = true;
+  if (!masterClients.has(targetClient.socketId)) {
+    masterClients.add(targetClient.socketId);
+    targetClient.client.isMaster = true;
+    targetClient.client.wantsToBeMaster = true;
     
     // Track for reconnection
     previousMasters.set(clientId, {
@@ -797,7 +814,7 @@ app.post('/api/add-master', (req, res) => {
     });
     
     // Notify client
-    io.to(targetSocketId).emit('master-role-granted', {
+    io.to(targetClient.socketId).emit('master-role-granted', {
       isMaster: true,
       clientId: clientId,
       message: 'Anda ditambahkan sebagai Master Controller oleh admin',
@@ -807,7 +824,7 @@ app.post('/api/add-master', (req, res) => {
     // Notify all
     io.emit('master-added', {
       masterClientId: clientId,
-      masterSocketId: targetSocketId,
+      masterSocketId: targetClient.socketId,
       timestamp: new Date().toISOString(),
       totalMasters: masterClients.size,
       masterList: getMasterListSnapshot(),
@@ -815,7 +832,7 @@ app.post('/api/add-master', (req, res) => {
     });
 
     processQueuedMasterRequests().catch((error) => {
-      console.error(`[${new Date().toISOString()}] Failed to process queued requests after API add-master:`, error.message);
+      logError('Failed to process queued requests after API add-master', error.message);
     });
     
     res.json({
@@ -824,10 +841,7 @@ app.post('/api/add-master', (req, res) => {
       totalMasters: masterClients.size
     });
   } else {
-    res.json({
-      success: false,
-      message: `Client ${clientId} sudah menjadi Master Controller`
-    });
+    sendApiError(res, 409, `Client ${clientId} sudah menjadi Master Controller`);
   }
 });
 
@@ -835,31 +849,20 @@ app.post('/api/remove-master', (req, res) => {
   const { clientId } = req.body;
   
   if (!clientId) {
-    return res.status(400).json({
-      success: false,
-      error: 'clientId diperlukan'
-    });
+    return sendApiError(res, 400, 'clientId diperlukan');
   }
   
   // Find client by ID
-  let targetSocketId = null;
-  connectedClients.forEach((client, socketId) => {
-    if (client.id === clientId) {
-      targetSocketId = socketId;
-    }
-  });
-  
-  if (!targetSocketId) {
-    return res.status(404).json({
-      success: false,
-      error: 'Client tidak ditemukan'
-    });
+  const targetClient = findClientRecordById(clientId);
+
+  if (!targetClient) {
+    return sendApiError(res, 404, 'Client tidak ditemukan');
   }
   
   // Remove from masters if exists
-  if (masterClients.has(targetSocketId)) {
-    masterClients.delete(targetSocketId);
-    connectedClients.get(targetSocketId).isMaster = false;
+  if (masterClients.has(targetClient.socketId)) {
+    masterClients.delete(targetClient.socketId);
+    targetClient.client.isMaster = false;
     
     // Update previous masters tracking
     previousMasters.set(clientId, {
@@ -869,7 +872,7 @@ app.post('/api/remove-master', (req, res) => {
     });
     
     // Notify client
-    io.to(targetSocketId).emit('master-role-removed', {
+    io.to(targetClient.socketId).emit('master-role-removed', {
       isMaster: false,
       clientId: clientId,
       message: 'Anda dikeluarkan dari Master Controller oleh admin',
@@ -891,10 +894,7 @@ app.post('/api/remove-master', (req, res) => {
       totalMasters: masterClients.size
     });
   } else {
-    res.json({
-      success: false,
-      message: `Client ${clientId} bukan Master Controller`
-    });
+    sendApiError(res, 409, `Client ${clientId} bukan Master Controller`);
   }
 });
 
@@ -921,10 +921,7 @@ app.get('/api/languages', (req, res) => {
       languages: languages
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Gagal mengambil daftar bahasa'
-    });
+    sendApiError(res, 500, 'Gagal mengambil daftar bahasa');
   }
 });
 
@@ -932,32 +929,25 @@ app.post('/api/tts', async (req, res) => {
   try {
     const { text, language = 'id-ID', speed = 1.0 } = req.body;
     
-    console.log(`API TTS Request - Text length: ${text?.length || 0}, Language: ${language}`);
+    logInfo(`API TTS request: language=${language}, textLength=${text?.length || 0}`);
     
     if (!text || typeof text !== 'string') {
-      return res.status(400).json({
-        success: false,
-        error: 'Text harus berupa string'
-      });
+      return sendApiError(res, 400, 'Text harus berupa string');
     }
     
     if (text.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Text tidak boleh kosong atau hanya spasi'
-      });
+      return sendApiError(res, 400, 'Text tidak boleh kosong atau hanya spasi');
     }
     
     if (text.length > MAX_TTS_TEXT_LENGTH) {
-      return res.status(400).json({
-        success: false,
-        error: `Text terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`
+      return sendApiError(res, 400, `Text terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`, {
+        suggestion: 'Coba bagi teks menjadi beberapa bagian'
       });
     }
     
-    const validSpeed = Math.max(0.5, Math.min(parseFloat(speed) || 1.0, 2.0));
+    const validSpeed = normalizeSpeed(speed);
     
-    console.log(`[${new Date().toISOString()}] API TTS Request: ${language}, Speed: ${validSpeed}, Text Length: ${text.length}`);
+    logInfo(`API TTS request details: language=${language}, speed=${validSpeed}, textLength=${text.length}`);
     
     const result = await googleTTSService.convertTextToSpeech({
       text: text,
@@ -984,16 +974,14 @@ app.post('/api/tts', async (req, res) => {
         clientCount: connectedClients.size
       });
     } else {
-      res.json({
-        success: false,
-        error: 'Tidak ada Master Controller yang terhubung',
-        result: result,
+      sendApiError(res, 503, 'Tidak ada Master Controller yang terhubung', {
+        result,
         clientCount: connectedClients.size
       });
     }
     
   } catch (error) {
-    console.error('API TTS Error:', error.message);
+    logError('API TTS error', error.message);
     
     let errorMessage = error.message || 'Terjadi kesalahan pada server';
     let suggestion = 'Coba kurangi panjang teks atau ganti bahasa';
@@ -1009,11 +997,7 @@ app.post('/api/tts', async (req, res) => {
       suggestion = 'Pastikan Anda memasukkan teks yang valid';
     }
     
-    res.status(500).json({
-      success: false,
-      error: errorMessage,
-      suggestion: suggestion
-    });
+    sendApiError(res, 500, errorMessage, { suggestion });
   }
 });
 
@@ -1022,10 +1006,7 @@ app.get('/api/test', async (req, res) => {
     const testResult = await googleTTSService.testConnection();
     res.json(testResult);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    sendApiError(res, 500, error.message);
   }
 });
 
@@ -1048,26 +1029,15 @@ app.get('/api/stats', (req, res) => {
 
 app.get('/api/client-status/:clientId', (req, res) => {
   const { clientId } = req.params;
-  
-  let isMaster = false;
-  let socketId = null;
-  let exists = false;
-  
-  // Cari client berdasarkan ID
-  connectedClients.forEach((client, sid) => {
-    if (client.id === clientId) {
-      socketId = sid;
-      isMaster = masterClients.has(sid);
-      exists = true;
-    }
-  });
+
+  const targetClient = findClientRecordById(clientId);
   
   res.json({
     success: true,
     clientId: clientId,
-    isMaster: isMaster,
-    socketId: socketId,
-    exists: exists,
+    isMaster: targetClient ? masterClients.has(targetClient.socketId) : false,
+    socketId: targetClient?.socketId || null,
+    exists: Boolean(targetClient),
     totalMasters: masterClients.size,
     previousMasterData: previousMasters.get(clientId) || null
   });
@@ -1075,62 +1045,49 @@ app.get('/api/client-status/:clientId', (req, res) => {
 
 app.get('/api/master-preference/:clientId', (req, res) => {
   const { clientId } = req.params;
-  
-  let targetSocketId = null;
-  connectedClients.forEach((client, socketId) => {
-    if (client.id === clientId) {
-      targetSocketId = socketId;
-    }
-  });
-  
-  if (targetSocketId) {
-    const client = connectedClients.get(targetSocketId);
+
+  const targetClient = findClientRecordById(clientId);
+
+  if (targetClient) {
     res.json({
       success: true,
       clientId: clientId,
-      wantsToBeMaster: client.wantsToBeMaster || false,
-      isMaster: client.isMaster || false,
+      wantsToBeMaster: targetClient.client.wantsToBeMaster || false,
+      isMaster: targetClient.client.isMaster || false,
       previousMasterData: previousMasters.get(clientId) || null
     });
   } else {
-    res.json({
-      success: false,
-      error: 'Client tidak ditemukan',
-      clientId: clientId
-    });
+    sendApiError(res, 404, 'Client tidak ditemukan', { clientId });
   }
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(`[${new Date().toISOString()}] Server Error:`, err.stack);
-  res.status(500).json({
-    success: false,
-    error: 'Terjadi kesalahan internal server',
+  logError('Server error', err.stack);
+  sendApiError(res, 500, 'Terjadi kesalahan internal server', {
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint tidak ditemukan'
-  });
+  sendApiError(res, 404, 'Endpoint tidak ditemukan');
 });
 
 // Start server
 server.listen(PORT, '0.0.0.0', () => {
   const serverUrl = `http://${process.env.SERVER_IP || 'localhost'}:${PORT}`;
-  console.log(`\n🚀 ========================================`);
-  console.log(`   Multi-Master TTS Server v3.0`);
+
+  console.log('\n========================================');
+  console.log('   Multi-Master TTS Server v3.0');
   console.log(`   Berjalan di: ${serverUrl}`);
   console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Socket.IO aktif`);
+  console.log('   Socket.IO active');
   console.log(`   Tanggal: ${new Date().toLocaleString()}`);
-  console.log(`========================================\n`);
-  console.log(`📡 Socket.IO siap menerima koneksi`);
-  console.log(`\n📚 API Endpoints:`);
+  console.log('========================================\n');
+
+  console.log('Socket.IO siap menerima koneksi');
+  console.log('\nAPI Endpoints:');
   console.log(`   GET  ${serverUrl}/api/health      - Cek status server & client`);
   console.log(`   GET  ${serverUrl}/api/clients     - Daftar client terhubung`);
   console.log(`   GET  ${serverUrl}/api/masters     - Daftar master aktif`);
@@ -1140,13 +1097,14 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   GET  ${serverUrl}/api/languages   - Daftar bahasa yang didukung`);
   console.log(`   POST ${serverUrl}/api/clear-queue - Hapus antrian TTS`);
   console.log(`   GET  ${serverUrl}/api/client-status/:clientId - Cek status client`);
-  console.log(`\n🌐 Frontend tersedia di: ${serverUrl}`);
-  console.log(`\n🔧 Fitur: Multi-Master TTS`);
-  console.log(`   • Multiple master dapat aktif bersamaan`);
-  console.log(`   • Client selalu kirim ke semua master`);
-  console.log(`   • Tidak ada broadcast atau spesifik master`);
-  console.log(`   • Master preference disimpan di localStorage`);
-  console.log(`   • Auto-reconnect saat browser di-refresh`);
-  console.log(`   • Master tetap stabil setelah refresh`);
-  console.log(`\n========================================\n`);
+
+  console.log(`\nFrontend tersedia di: ${serverUrl}`);
+  console.log('\nFitur: Multi-Master TTS');
+  console.log(' - Multiple master dapat aktif bersamaan');
+  console.log(' - Client selalu kirim ke semua master');
+  console.log(' - Tidak ada broadcast atau spesifik master');
+  console.log(' - Master preference disimpan di localStorage');
+  console.log(' - Auto-reconnect saat browser di-refresh');
+  console.log(' - Master tetap stabil setelah refresh');
+  console.log('\n========================================\n');
 });

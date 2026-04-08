@@ -1,6 +1,8 @@
 const axios = require('axios');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
 
+const MAX_TTS_TEXT_LENGTH = 5000;
+
 // Rate limiter untuk mencegah abuse
 const rateLimiter = new RateLimiterMemory({
   points: parseInt(process.env.RATE_LIMIT) || 100, // 100 request
@@ -27,6 +29,7 @@ class GoogleTTSService {
    * Map kode bahasa ke format Google TTS
    */
   mapLanguageCode(language) {
+    const normalizedLanguage = (language || '').trim();
     const languageMap = {
       // Bahasa Asia
       'id': 'id',           // Bahasa Indonesia
@@ -67,9 +70,14 @@ class GoogleTTSService {
       'ur': 'ur',
     };
     
-    // Jika kode panjang (seperti id-ID), ambil bagian pertama saja
-    const langCode = language.split('-')[0];
-    return languageMap[langCode] || languageMap[language] || 'en';
+    if (languageMap[normalizedLanguage]) {
+      return languageMap[normalizedLanguage];
+    }
+
+    // Jika kode panjang (seperti id-ID), ambil bagian pertama saja.
+    // Cek exact match dulu supaya kode khusus seperti zh-TW tidak salah dipetakan.
+    const langCode = normalizedLanguage.split('-')[0];
+    return languageMap[langCode] || 'en';
   }
 
   /**
@@ -149,8 +157,8 @@ class GoogleTTSService {
       errors.push('Text tidak boleh kosong atau hanya spasi');
     }
     
-    if (text.length > 5000) {
-      errors.push(`Text terlalu panjang (${text.length} karakter, maksimal 5000)`);
+    if (text.length > MAX_TTS_TEXT_LENGTH) {
+      errors.push(`Text terlalu panjang (${text.length} karakter, maksimal ${MAX_TTS_TEXT_LENGTH})`);
     }
     
     if (!language || language.trim().length === 0) {
@@ -348,9 +356,15 @@ class GoogleTTSService {
       
       const testUrl = `${this.baseUrl}?${params.toString()}`;
       
-      const response = await axios.head(testUrl, {
+      const response = await axios.get(testUrl, {
+        responseType: 'arraybuffer',
         timeout: 10000,
-        headers: this.defaultHeaders,
+        headers: {
+          ...this.defaultHeaders,
+          'Accept': 'audio/mpeg, audio/*',
+        },
+        maxContentLength: 256 * 1024,
+        maxBodyLength: 256 * 1024,
       });
       
       return {

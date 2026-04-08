@@ -143,6 +143,24 @@ function ttsApp() {
             this.primeAudioElement(audioElement);
         },
 
+        async fetchJsonOrThrow(url, fallbackError) {
+            const response = await fetch(url);
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || data.success === false) {
+                const error = new Error(data.error || data.message || fallbackError || `Request gagal (${response.status})`);
+                error.status = response.status;
+                error.payload = data;
+                throw error;
+            }
+
+            return data;
+        },
+
+        getEventErrorMessage(data, fallbackMessage) {
+            return data?.error || data?.reason || data?.message || fallbackMessage;
+        },
+
         primeAudioElement(audioElement) {
             if (!audioElement || this.audioPrimed) return;
 
@@ -202,8 +220,10 @@ function ttsApp() {
             if (!this.clientId) return;
             
             try {
-                const response = await fetch(`/api/client-status/${this.clientId}`);
-                const data = await response.json();
+                const data = await this.fetchJsonOrThrow(
+                    `/api/client-status/${this.clientId}`,
+                    'Gagal menyinkronkan status master'
+                );
                 
                 if (data.success && data.exists) {
                     if (data.isMaster && !this.isMaster) {
@@ -422,11 +442,16 @@ function ttsApp() {
             
             this.socket.on('master-role-denied', (data) => {
                 this.isRequestingMaster = false;
-                this.showNotification(`Gagal menjadi Master: ${data.reason}`, 'error');
+                this.showNotification(`Gagal menjadi Master: ${this.getEventErrorMessage(data, 'Permintaan ditolak')}`, 'error');
                 
                 if (this.wantsToBeMaster) {
                     this.saveMasterPreference();
                 }
+            });
+
+            this.socket.on('master-role-duplicate', (data) => {
+                this.isRequestingMaster = false;
+                this.showNotification(this.getEventErrorMessage(data, 'Anda sudah menjadi Master Controller'), 'info');
             });
             
             this.socket.on('master-role-released', (data) => {
@@ -457,6 +482,11 @@ function ttsApp() {
                 } else {
                     this.showNotification(`Master Controller terputus: ${this.shortClientId(data.disconnectedMasterId)}`, 'warning');
                 }
+            });
+
+            this.socket.on('master-inactive', (data) => {
+                this.updateMasterList((this.masterClients || []).filter(master => master.id !== data.inactiveClientId));
+                this.showNotification(`Master tidak aktif: ${this.shortClientId(data.inactiveClientId)}`, 'warning');
             });
             
             this.socket.on('master-needed', (data) => {
@@ -557,7 +587,7 @@ function ttsApp() {
             
             this.socket.on('tts-error', (data) => {
                 this.isLoading = false;
-                this.showNotification(data.error || 'Terjadi kesalahan pada TTS', 'error');
+                this.showNotification(this.getEventErrorMessage(data, 'Terjadi kesalahan pada TTS'), 'error');
                 
                 this.addToHistory({
                     text: this.text,
@@ -567,6 +597,10 @@ function ttsApp() {
                     timestamp: new Date().toISOString(),
                     error: data.error
                 });
+            });
+
+            this.socket.on('play-audio-denied', (data) => {
+                this.showNotification(this.getEventErrorMessage(data, 'Akses pemutaran audio ditolak'), 'warning');
             });
             
             this.socket.on('play-audio-command', (data) => {
@@ -590,6 +624,22 @@ function ttsApp() {
                 if (data.fromClientId !== this.clientId) {
                     this.showNotification(`${this.shortClientId(data.fromClientId)} mengirim teks ke semua master: "${data.textPreview}"`, 'info');
                 }
+            });
+
+            this.socket.on('tts-request-cancelled', (data) => {
+                this.showNotification(
+                    this.getEventErrorMessage(data, 'Permintaan TTS dibatalkan'),
+                    'warning'
+                );
+            });
+
+            this.socket.on('queue-cleared', (data) => {
+                this.showNotification(
+                    data.clearedCount > 0
+                        ? `Antrian TTS dibersihkan (${data.clearedCount} item)`
+                        : 'Antrian TTS sudah kosong',
+                    'info'
+                );
             });
             
             this.socket.on('pong', (data) => {
@@ -1255,8 +1305,7 @@ function ttsApp() {
         
         async loadLanguages() {
             try {
-                const response = await fetch('/api/languages');
-                const data = await response.json();
+                const data = await this.fetchJsonOrThrow('/api/languages', 'Gagal mengambil daftar bahasa');
                 if (data.success) {
                     this.languages = data.languages;
                 }
@@ -1271,8 +1320,7 @@ function ttsApp() {
         
         async testConnection() {
             try {
-                const response = await fetch('/api/test');
-                const data = await response.json();
+                const data = await this.fetchJsonOrThrow('/api/test', 'Gagal menguji koneksi');
                 alert(data.message || 'Koneksi berhasil diuji');
             } catch (error) {
                 alert('Gagal menguji koneksi: ' + error.message);
