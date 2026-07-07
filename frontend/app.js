@@ -260,7 +260,9 @@ function ttsApp() {
             }
             
             // Create new connection
+            const socketToken = localStorage.getItem('ttsSocketToken') || '';
             this.socket = io({
+                auth: socketToken ? { token: socketToken } : {},
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
@@ -452,6 +454,12 @@ function ttsApp() {
             this.socket.on('master-role-duplicate', (data) => {
                 this.isRequestingMaster = false;
                 this.showNotification(this.getEventErrorMessage(data, 'Anda sudah menjadi Master Controller'), 'info');
+            });
+
+            this.socket.on('auth-error', (data) => {
+                this.serverStatus = 'error';
+                this.serverStatusText = 'Token socket tidak valid';
+                this.showNotification(this.getEventErrorMessage(data, 'Token socket tidak valid'), 'error', true);
             });
             
             this.socket.on('master-role-released', (data) => {

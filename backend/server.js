@@ -3,25 +3,56 @@ const express = require('express');
 const morgan = require('morgan');
 const path = require('path');
 const http = require('http');
+const cors = require('cors');
 const socketIo = require('socket.io');
 const googleTTSService = require('./services/googleTTSService');
 
 const app = express();
 const server = http.createServer(app);
+const PORT = process.env.PORT || 3000;
+const MAX_TTS_TEXT_LENGTH = 5000;
+const MAX_QUEUE_LENGTH = parseInt(process.env.MAX_QUEUE_LENGTH, 10) || 100;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const SOCKET_AUTH_TOKEN = process.env.SOCKET_AUTH_TOKEN || '';
+const defaultAllowedOrigins = [
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+  process.env.SERVER_IP ? `http://${process.env.SERVER_IP}:${PORT}` : null
+].filter(Boolean);
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || defaultAllowedOrigins.join(','))
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) {
+    return true;
+  }
+
+  return allowedOrigins.includes(origin);
+};
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Origin not allowed'));
+  },
+  methods: ['GET', 'POST']
+};
+
 const io = socketIo(server, {
   pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT, 10) || 5000,
   pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL, 10) || 25000,
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
-
-const PORT = process.env.PORT || 3000;
-const MAX_TTS_TEXT_LENGTH = 5000;
 
 // Middleware
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../frontend')));
@@ -72,6 +103,36 @@ const emitSocketError = (socket, eventName, error, extras = {}) => {
     timestamp: new Date().toISOString(),
     ...extras
   });
+};
+
+const getBearerToken = (req) => {
+  const authHeader = req.get('authorization') || '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return req.get('x-admin-token') || '';
+};
+
+const requireAdminToken = (req, res, next) => {
+  if (!ADMIN_TOKEN) {
+    return sendApiError(res, 503, 'ADMIN_TOKEN belum dikonfigurasi di server');
+  }
+
+  if (getBearerToken(req) !== ADMIN_TOKEN) {
+    return sendApiError(res, 401, 'Token admin tidak valid atau tidak ada');
+  }
+
+  return next();
+};
+
+const isSocketAuthorized = (socket) => {
+  if (!SOCKET_AUTH_TOKEN) {
+    return true;
+  }
+
+  return socket.handshake.auth?.token === SOCKET_AUTH_TOKEN
+    || socket.handshake.headers['x-socket-token'] === SOCKET_AUTH_TOKEN;
 };
 
 const normalizeSpeed = (speed) => {
@@ -188,6 +249,12 @@ const processQueuedMasterRequests = async () => {
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
+  if (!isSocketAuthorized(socket)) {
+    emitSocketError(socket, 'auth-error', 'Token socket tidak valid atau tidak ada');
+    socket.disconnect(true);
+    return;
+  }
+
   const clientId = generateClientId();
   logInfo(`Client connected: ${clientId} (socket=${socket.id})`);
   
@@ -517,6 +584,25 @@ io.on('connection', (socket) => {
       
       // If no masters, queue the request
       if (masterClients.size === 0) {
+        const queuedForClient = masterRequestQueue.filter((request) => request.fromClientSocketId === socket.id).length;
+        const maxQueuedPerClient = parseInt(process.env.MAX_QUEUE_PER_CLIENT, 10) || 5;
+
+        if (masterRequestQueue.length >= MAX_QUEUE_LENGTH) {
+          emitSocketError(socket, 'tts-error', `Antrian TTS penuh (${MAX_QUEUE_LENGTH} permintaan). Coba lagi setelah master aktif.`, {
+            queueFull: true,
+            pendingRequests: masterRequestQueue.length
+          });
+          return;
+        }
+
+        if (queuedForClient >= maxQueuedPerClient) {
+          emitSocketError(socket, 'tts-error', `Terlalu banyak permintaan dalam antrian untuk client ini. Maksimal ${maxQueuedPerClient}.`, {
+            queueFull: true,
+            queuedForClient
+          });
+          return;
+        }
+
         masterRequestQueue.push({
           ...data,
           text: trimmedText,
@@ -786,7 +872,7 @@ app.get('/api/masters', (req, res) => {
   });
 });
 
-app.post('/api/add-master', (req, res) => {
+app.post('/api/add-master', requireAdminToken, (req, res) => {
   const { clientId } = req.body;
   
   if (!clientId) {
@@ -845,7 +931,7 @@ app.post('/api/add-master', (req, res) => {
   }
 });
 
-app.post('/api/remove-master', (req, res) => {
+app.post('/api/remove-master', requireAdminToken, (req, res) => {
   const { clientId } = req.body;
   
   if (!clientId) {
@@ -898,7 +984,7 @@ app.post('/api/remove-master', (req, res) => {
   }
 });
 
-app.post('/api/clear-queue', (req, res) => {
+app.post('/api/clear-queue', requireAdminToken, (req, res) => {
   const cleared = masterRequestQueue.length;
   masterRequestQueue = [];
   
@@ -925,7 +1011,7 @@ app.get('/api/languages', (req, res) => {
   }
 });
 
-app.post('/api/tts', async (req, res) => {
+app.post('/api/tts', requireAdminToken, async (req, res) => {
   try {
     const { text, language = 'id-ID', speed = 1.0 } = req.body;
     
@@ -944,6 +1030,12 @@ app.post('/api/tts', async (req, res) => {
         suggestion: 'Coba bagi teks menjadi beberapa bagian'
       });
     }
+
+    if (masterClients.size === 0) {
+      return sendApiError(res, 503, 'Tidak ada Master Controller yang terhubung', {
+        clientCount: connectedClients.size
+      });
+    }
     
     const validSpeed = normalizeSpeed(speed);
     
@@ -955,30 +1047,22 @@ app.post('/api/tts', async (req, res) => {
       speed: validSpeed
     });
     
-    // Kirim ke semua master jika ada
-    if (masterClients.size > 0) {
-      masterClients.forEach(masterSocketId => {
-        io.to(masterSocketId).emit('tts-audio', {
-          ...result,
-          fromClientId: 'api-request',
-          timestamp: new Date().toISOString(),
-          priority: 'high',
-          forMasterOnly: true,
-          masterCount: masterClients.size
-        });
-      });
-      
-      res.json({
+    masterClients.forEach(masterSocketId => {
+      io.to(masterSocketId).emit('tts-audio', {
         ...result,
-        totalMasters: masterClients.size,
-        clientCount: connectedClients.size
+        fromClientId: 'api-request',
+        timestamp: new Date().toISOString(),
+        priority: 'high',
+        forMasterOnly: true,
+        masterCount: masterClients.size
       });
-    } else {
-      sendApiError(res, 503, 'Tidak ada Master Controller yang terhubung', {
-        result,
-        clientCount: connectedClients.size
-      });
-    }
+    });
+
+    res.json({
+      ...result,
+      totalMasters: masterClients.size,
+      clientCount: connectedClients.size
+    });
     
   } catch (error) {
     logError('API TTS error', error.message);
