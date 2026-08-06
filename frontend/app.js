@@ -37,6 +37,13 @@ function ttsApp() {
         languages: [],
         history: [],
         notifications: [],
+
+        // Scheduler: jadwal alarm dan daftar teks custom
+        schedules: [],
+        showSchedulerModal: false,
+        schedulerDraft: null,
+        schedulerTimer: null,
+        runningScheduleIds: [],
         
         // UI Controls
         charCount: 0,
@@ -64,6 +71,8 @@ function ttsApp() {
             this.loadHistory();
             this.loadMasterPreference();
             this.loadAudioState();
+            this.loadSchedules();
+            this.startScheduler();
             this.loadClientId();
             this.setupAudioAutoplayBootstrap();
 
@@ -109,6 +118,7 @@ function ttsApp() {
                 this.saveAudioState();
                 this.saveMasterPreference();
                 this.saveClientId();
+                this.stopScheduler();
             });
             
             // Initialize socket connection
@@ -557,6 +567,13 @@ function ttsApp() {
             
             this.socket.on('tts-complete', (data) => {
                 this.isLoading = false;
+
+                // Request dari scheduler tidak boleh mengosongkan teks yang
+                // sedang diketik user atau tercatat memakai state form utama.
+                if (data.schedulerId) {
+                    this.showNotification(`Item ${data.schedulerItem || ''} scheduler “${data.schedulerName || ''}” terkirim`, 'success');
+                    return;
+                }
                 
                 // Add to history
                 this.addToHistory({
@@ -581,6 +598,8 @@ function ttsApp() {
             this.socket.on('tts-queued', (data) => {
                 this.isLoading = false;
                 this.showNotification(data.message || 'TTS dalam antrian', 'info');
+
+                if (data.schedulerId) return;
                 
                 this.addToHistory({
                     text: this.text,
@@ -595,6 +614,10 @@ function ttsApp() {
             
             this.socket.on('tts-error', (data) => {
                 this.isLoading = false;
+                if (data.schedulerId) {
+                    this.showNotification(`Item ${data.schedulerItem || ''} scheduler gagal diproses`, 'error');
+                    return;
+                }
                 this.showNotification(this.getEventErrorMessage(data, 'Terjadi kesalahan pada TTS'), 'error');
                 
                 this.addToHistory({
@@ -1123,6 +1146,195 @@ function ttsApp() {
             this.isPlaying = false;
             this.lastHandledRequestId = null;
             this.clearAudioState();
+        },
+
+        // ==================== Scheduler ====================
+        newScheduleItem() {
+            return { text: '', language: this.language || 'id-ID', speed: Number(this.speed) || 1, priority: this.priority || 'normal' };
+        },
+
+        openScheduler() {
+            this.schedulerDraft = null;
+            this.showSchedulerModal = true;
+        },
+
+        createSchedule() {
+            this.schedulerDraft = {
+                id: null,
+                name: `Jadwal ${this.schedules.length + 1}`,
+                time: '07:00',
+                intervalMode: 'daily',
+                intervalMinutes: 1440,
+                itemIntervalSeconds: 3,
+                enabled: true,
+                items: [this.newScheduleItem()]
+            };
+            this.showSchedulerModal = true;
+        },
+
+        editSchedule(schedule) {
+            this.schedulerDraft = JSON.parse(JSON.stringify(schedule));
+            this.schedulerDraft.items = this.schedulerDraft.items?.length ? this.schedulerDraft.items : [this.newScheduleItem()];
+            this.schedulerDraft.intervalMode = this.getScheduleIntervalMode(this.schedulerDraft.intervalMinutes);
+            this.showSchedulerModal = true;
+        },
+
+        getScheduleIntervalMode(minutes) {
+            const value = Number(minutes) || 1440;
+            if (value === 1440) return 'daily';
+            if (value === 60) return 'hourly';
+            return 'custom';
+        },
+
+        updateDraftInterval() {
+            if (!this.schedulerDraft) return;
+            if (this.schedulerDraft.intervalMode === 'daily') this.schedulerDraft.intervalMinutes = 1440;
+            if (this.schedulerDraft.intervalMode === 'hourly') this.schedulerDraft.intervalMinutes = 60;
+        },
+
+        addScheduleItem() {
+            if (this.schedulerDraft) this.schedulerDraft.items.push(this.newScheduleItem());
+        },
+
+        removeScheduleItem(index) {
+            if (!this.schedulerDraft || this.schedulerDraft.items.length <= 1) return;
+            this.schedulerDraft.items.splice(index, 1);
+        },
+
+        saveSchedule() {
+            const draft = this.schedulerDraft;
+            if (!draft) return;
+            const time = String(draft.time || '').match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
+            const items = (draft.items || []).map(item => ({
+                text: String(item.text || '').trim(),
+                language: item.language || 'id-ID',
+                speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
+                priority: item.priority || 'normal'
+            })).filter(item => item.text);
+
+            if (!time) return this.showNotification('Pilih jam scheduler yang valid (HH:MM)', 'error');
+            if (!items.length) return this.showNotification('Isi minimal satu teks custom untuk diputar', 'error');
+
+            const intervalMinutes = draft.intervalMode === 'daily'
+                ? 1440
+                : (draft.intervalMode === 'hourly' ? 60 : Math.max(1, Math.round(Number(draft.intervalMinutes) || 15)));
+
+            const schedule = {
+                id: draft.id || `schedule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                name: String(draft.name || '').trim() || 'Jadwal tanpa nama',
+                time: draft.time,
+                intervalMinutes,
+                itemIntervalSeconds: Math.max(0, Math.round(Number(draft.itemIntervalSeconds) || 0)),
+                enabled: draft.enabled !== false,
+                items,
+                lastRunAt: draft.lastRunAt || null
+            };
+            const index = this.schedules.findIndex(item => item.id === schedule.id);
+            if (index >= 0) this.schedules.splice(index, 1, schedule);
+            else this.schedules.push(schedule);
+            this.persistSchedules();
+            this.showSchedulerModal = false;
+            this.schedulerDraft = null;
+            this.showNotification(`Scheduler “${schedule.name}” berhasil disimpan`, 'success');
+        },
+
+        deleteSchedule(schedule) {
+            if (!schedule || !confirm(`Hapus scheduler “${schedule.name}”?`)) return;
+            this.schedules = this.schedules.filter(item => item.id !== schedule.id);
+            this.persistSchedules();
+        },
+
+        toggleSchedule(schedule) {
+            schedule.enabled = !schedule.enabled;
+            this.persistSchedules();
+        },
+
+        persistSchedules() {
+            localStorage.setItem('ttsSchedules', JSON.stringify(this.schedules));
+        },
+
+        loadSchedules() {
+            try {
+                const saved = JSON.parse(localStorage.getItem('ttsSchedules') || '[]');
+                this.schedules = Array.isArray(saved) ? saved : [];
+            } catch (error) {
+                console.error('Failed to load schedules:', error);
+                this.schedules = [];
+            }
+        },
+
+        startScheduler() {
+            this.stopScheduler();
+            this.checkSchedules();
+            this.schedulerTimer = setInterval(() => this.checkSchedules(), 1000);
+        },
+
+        stopScheduler() {
+            if (this.schedulerTimer) clearInterval(this.schedulerTimer);
+            this.schedulerTimer = null;
+        },
+
+        getScheduleOccurrence(schedule, now = new Date()) {
+            if (!schedule?.time) return null;
+            const [hours, minutes] = schedule.time.split(':').map(Number);
+            if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+            const start = new Date(now);
+            start.setHours(hours, minutes, 0, 0);
+            const interval = Math.max(1, Number(schedule.intervalMinutes) || 1440) * 60000;
+            if (now < start) return null;
+            const occurrence = Math.floor((now.getTime() - start.getTime()) / interval);
+            return new Date(start.getTime() + occurrence * interval);
+        },
+
+        formatScheduleInterval(minutes) {
+            const value = Number(minutes) || 0;
+            if (value % 1440 === 0) return value / 1440 === 1 ? 'setiap hari' : `setiap ${value / 1440} hari`;
+            if (value % 60 === 0) return `setiap ${value / 60} jam`;
+            return `setiap ${value} menit`;
+        },
+
+        checkSchedules() {
+            if (!this.schedules.length) return;
+            // Jangan menandai alarm sudah berjalan sebelum koneksi tersedia;
+            // setelah tersambung, occurrence yang sama akan diputar.
+            if (!this.socket || !this.socket.connected) return;
+            const now = new Date();
+            this.schedules.forEach(schedule => {
+                if (!schedule.enabled || this.runningScheduleIds.includes(schedule.id)) return;
+                const occurrence = this.getScheduleOccurrence(schedule, now);
+                if (!occurrence) return;
+                const occurrenceKey = occurrence.toISOString();
+                if (schedule.lastRunAt === occurrenceKey) return;
+                schedule.lastRunAt = occurrenceKey;
+                this.persistSchedules();
+                this.runSchedule(schedule);
+            });
+        },
+
+        async runSchedule(schedule) {
+            this.runningScheduleIds.push(schedule.id);
+            this.showNotification(`Scheduler “${schedule.name}” mulai (${schedule.items.length} item)`, 'info');
+            try {
+                for (let index = 0; index < schedule.items.length; index += 1) {
+                    const item = schedule.items[index];
+                    if (!item.text) continue;
+                    this.socket.emit('tts-request', {
+                        text: item.text,
+                        language: item.language || 'id-ID',
+                        speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
+                        priority: item.priority || 'normal',
+                        timestamp: new Date().toISOString(),
+                        schedulerId: schedule.id,
+                        schedulerName: schedule.name,
+                        schedulerItem: index + 1
+                    });
+                    if (index < schedule.items.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000));
+                    }
+                }
+            } finally {
+                this.runningScheduleIds = this.runningScheduleIds.filter(id => id !== schedule.id);
+            }
         },
         
         // Show notification

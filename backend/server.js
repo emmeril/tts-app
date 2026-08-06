@@ -232,7 +232,10 @@ const processQueuedMasterRequests = async () => {
           textLength: request.text.length,
           language: request.language || 'id-ID',
           duration: result.duration,
-          queued: true
+          queued: true,
+          schedulerId: request.schedulerId || null,
+          schedulerName: request.schedulerName || null,
+          schedulerItem: request.schedulerItem || null
         });
       }
     } catch (error) {
@@ -616,7 +619,10 @@ io.on('connection', (socket) => {
           success: true,
           message: 'TTS request dalam antrian. Menunggu master controller...',
           queuePosition: masterRequestQueue.length,
-          textLength: text.length
+          textLength: text.length,
+          schedulerId: data.schedulerId || null,
+          schedulerName: data.schedulerName || null,
+          schedulerItem: data.schedulerItem || null
         });
         
         io.emit('master-needed', {
@@ -654,7 +660,10 @@ io.on('connection', (socket) => {
         masterCount: masterClients.size,
         textLength: text.length,
         language: language,
-        duration: result.duration
+        duration: result.duration,
+        schedulerId: data.schedulerId || null,
+        schedulerName: data.schedulerName || null,
+        schedulerItem: data.schedulerItem || null
       });
       
       // Notify all clients about new TTS (except sender)
@@ -686,7 +695,10 @@ io.on('connection', (socket) => {
       }
       
       emitSocketError(socket, 'tts-error', `${userMessage} (Detail: ${error.message})`, {
-        suggestion
+        suggestion,
+        schedulerId: data.schedulerId || null,
+        schedulerName: data.schedulerName || null,
+        schedulerItem: data.schedulerItem || null
       });
     }
   });
