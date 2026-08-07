@@ -81,6 +81,7 @@ app.use(express.static(path.join(__dirname, '../frontend')));
 const connectedClients = new Map();
 let masterClients = new Set(); // Multiple masters
 let masterRequestQueue = [];
+const pendingSchedulerPlaybacks = new Map();
 
 // Track previous masters for reconnection
 const previousMasters = new Map(); // clientId -> { wantsToBeMaster: true, lastSeen: Date }
@@ -93,6 +94,13 @@ const generateClientId = () => {
 const generateRequestId = () => {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 };
+
+const getSchedulerContext = (data = {}) => ({
+  schedulerId: data.schedulerId || null,
+  schedulerName: data.schedulerName || null,
+  schedulerItem: data.schedulerItem || null,
+  schedulerRunId: data.schedulerRunId || null
+});
 
 const logInfo = (message) => {
   console.log(`[${new Date().toISOString()}] ${message}`);
@@ -209,8 +217,45 @@ const promotePreviousMasterRecord = (currentClientId, previousClientId) => {
   previousMasters.delete(previousClientId);
 };
 
+const completeSchedulerPlayback = (requestId, status = 'ended', masterSocketId = null) => {
+  const pending = pendingSchedulerPlaybacks.get(requestId);
+  if (!pending) return false;
+
+  clearTimeout(pending.timeout);
+  pendingSchedulerPlaybacks.delete(requestId);
+
+  if (pending.fromClientSocketId && connectedClients.has(pending.fromClientSocketId)) {
+    io.to(pending.fromClientSocketId).emit('scheduler-item-finished', {
+      success: status === 'ended',
+      status,
+      requestId,
+      masterSocketId,
+      ...getSchedulerContext(pending)
+    });
+  }
+  return true;
+};
+
+const trackSchedulerPlayback = (requestId, result, request) => {
+  if (!request.schedulerRunId || !request.fromClientSocketId) return;
+
+  const durationSeconds = Number(result.duration);
+  const timeoutMs = Math.min(
+    30 * 60 * 1000,
+    Math.max(30 * 1000, (Number.isFinite(durationSeconds) ? durationSeconds * 1000 : 0) + 30 * 1000)
+  );
+  const pending = {
+    fromClientSocketId: request.fromClientSocketId,
+    ...getSchedulerContext(request),
+    timeout: null
+  };
+  pending.timeout = setTimeout(() => completeSchedulerPlayback(requestId, 'timeout'), timeoutMs);
+  pendingSchedulerPlaybacks.set(requestId, pending);
+};
+
 const emitTtsAudioToMasters = (result, request) => {
   const requestId = generateRequestId();
+  trackSchedulerPlayback(requestId, result, request);
 
   masterClients.forEach((masterSocketId) => {
     io.to(masterSocketId).emit('tts-audio', {
@@ -220,10 +265,13 @@ const emitTtsAudioToMasters = (result, request) => {
       timestamp: new Date().toISOString(),
       priority: request.priority || 'normal',
       requestId,
+      ...getSchedulerContext(request),
       forMasterOnly: true,
       masterCount: masterClients.size
     });
   });
+
+  return requestId;
 };
 
 const getUploadedAudio = (audioUrl) => {
@@ -292,7 +340,8 @@ const processQueuedMasterRequests = async () => {
             queued: true,
             schedulerId: request.schedulerId || null,
             schedulerName: request.schedulerName || null,
-            schedulerItem: request.schedulerItem || null
+            schedulerItem: request.schedulerItem || null,
+            schedulerRunId: request.schedulerRunId || null
           });
         }
         continue;
@@ -317,7 +366,8 @@ const processQueuedMasterRequests = async () => {
           queued: true,
           schedulerId: request.schedulerId || null,
           schedulerName: request.schedulerName || null,
-          schedulerItem: request.schedulerItem || null
+          schedulerItem: request.schedulerItem || null,
+          schedulerRunId: request.schedulerRunId || null
         });
       }
     } catch (error) {
@@ -328,7 +378,8 @@ const processQueuedMasterRequests = async () => {
         const errorEvent = isUploadedAudio ? 'audio-error' : 'tts-error';
         const requestLabel = isUploadedAudio ? 'audio upload' : 'TTS';
         emitSocketError(io.to(request.fromClientSocketId), errorEvent, `Gagal memproses antrian ${requestLabel} (Detail: ${error.message})`, {
-          queued: true
+          queued: true,
+          ...getSchedulerContext(request)
         });
       }
     }
@@ -653,19 +704,20 @@ io.on('connection', (socket) => {
 
       // Validasi input dengan detail
       if (!text || typeof text !== 'string') {
-        emitSocketError(socket, 'tts-error', 'Teks harus berupa string');
+        emitSocketError(socket, 'tts-error', 'Teks harus berupa string', getSchedulerContext(data));
         return;
       }
       
       const trimmedText = text.trim();
       if (trimmedText.length === 0) {
-        emitSocketError(socket, 'tts-error', 'Teks tidak boleh kosong atau hanya spasi');
+        emitSocketError(socket, 'tts-error', 'Teks tidak boleh kosong atau hanya spasi', getSchedulerContext(data));
         return;
       }
       
       if (text.length > MAX_TTS_TEXT_LENGTH) {
         emitSocketError(socket, 'tts-error', `Teks terlalu panjang (${text.length} karakter). Maksimal ${MAX_TTS_TEXT_LENGTH} karakter.`, {
-          suggestion: 'Coba bagi teks menjadi beberapa bagian'
+          suggestion: 'Coba bagi teks menjadi beberapa bagian',
+          ...getSchedulerContext(data)
         });
         return;
       }
@@ -678,7 +730,8 @@ io.on('connection', (socket) => {
         if (masterRequestQueue.length >= MAX_QUEUE_LENGTH) {
           emitSocketError(socket, 'tts-error', `Antrian TTS penuh (${MAX_QUEUE_LENGTH} permintaan). Coba lagi setelah master aktif.`, {
             queueFull: true,
-            pendingRequests: masterRequestQueue.length
+            pendingRequests: masterRequestQueue.length,
+            ...getSchedulerContext(data)
           });
           return;
         }
@@ -686,7 +739,8 @@ io.on('connection', (socket) => {
         if (queuedForClient >= maxQueuedPerClient) {
           emitSocketError(socket, 'tts-error', `Terlalu banyak permintaan dalam antrian untuk client ini. Maksimal ${maxQueuedPerClient}.`, {
             queueFull: true,
-            queuedForClient
+            queuedForClient,
+            ...getSchedulerContext(data)
           });
           return;
         }
@@ -725,18 +779,12 @@ io.on('connection', (socket) => {
         speed: normalizeSpeed(speed)
       });
       
-      // Kirim ke semua master
-      masterClients.forEach(masterSocketId => {
-        io.to(masterSocketId).emit('tts-audio', {
-          ...result,
-          fromClientId: client.id,
-          fromClientSocketId: socket.id,
-          timestamp: new Date().toISOString(),
-          priority: priority,
-          requestId: generateRequestId(),
-          forMasterOnly: true,
-          masterCount: masterClients.size
-        });
+      // Kirim ke semua master dengan satu request ID agar status playback dapat dilacak.
+      emitTtsAudioToMasters(result, {
+        ...data,
+        fromClientId: client.id,
+        fromClientSocketId: socket.id,
+        priority
       });
       
       socket.emit('tts-complete', {
@@ -748,7 +796,8 @@ io.on('connection', (socket) => {
         duration: result.duration,
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
-        schedulerItem: data.schedulerItem || null
+        schedulerItem: data.schedulerItem || null,
+        schedulerRunId: data.schedulerRunId || null
       });
       
       // Notify all clients about new TTS (except sender)
@@ -783,7 +832,8 @@ io.on('connection', (socket) => {
         suggestion,
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
-        schedulerItem: data.schedulerItem || null
+        schedulerItem: data.schedulerItem || null,
+        schedulerRunId: data.schedulerRunId || null
       });
     }
   });
@@ -803,7 +853,8 @@ io.on('connection', (socket) => {
         emitSocketError(socket, 'audio-error', 'File audio upload tidak ditemukan atau URL tidak valid', {
           schedulerId: data.schedulerId || null,
           schedulerName: data.schedulerName || null,
-          schedulerItem: data.schedulerItem || null
+          schedulerItem: data.schedulerItem || null,
+          schedulerRunId: data.schedulerRunId || null
         });
         return;
       }
@@ -825,7 +876,7 @@ io.on('connection', (socket) => {
         if (masterRequestQueue.length >= MAX_QUEUE_LENGTH || queuedForClient >= maxQueuedPerClient) {
           emitSocketError(socket, 'audio-error', 'Antrian audio penuh. Coba lagi setelah Master aktif.', {
             queueFull: true,
-            schedulerId: data.schedulerId || null
+            ...getSchedulerContext(data)
           });
           return;
         }
@@ -837,7 +888,8 @@ io.on('connection', (socket) => {
           queuePosition: masterRequestQueue.length,
           schedulerId: data.schedulerId || null,
           schedulerName: data.schedulerName || null,
-          schedulerItem: data.schedulerItem || null
+          schedulerItem: data.schedulerItem || null,
+          schedulerRunId: data.schedulerRunId || null
         });
         io.emit('master-needed', {
           message: 'Master controller diperlukan untuk memproses audio',
@@ -853,14 +905,16 @@ io.on('connection', (socket) => {
         masterCount: masterClients.size,
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
-        schedulerItem: data.schedulerItem || null
+        schedulerItem: data.schedulerItem || null,
+        schedulerRunId: data.schedulerRunId || null
       });
     } catch (error) {
       logError(`Uploaded audio error for ${client?.id || socket.id}`, error.message);
       emitSocketError(socket, 'audio-error', `Gagal mengirim audio upload (Detail: ${error.message})`, {
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
-        schedulerItem: data.schedulerItem || null
+        schedulerItem: data.schedulerItem || null,
+        schedulerRunId: data.schedulerRunId || null
       });
     }
   });
@@ -891,11 +945,23 @@ io.on('connection', (socket) => {
   });
   
   // Handle audio playback status
-  socket.on('audio-status', (status) => {
+  socket.on('audio-status', (statusData) => {
     const client = connectedClients.get(socket.id);
+    const playbackStatus = typeof statusData === 'string' ? statusData : statusData?.status;
+    const requestId = typeof statusData === 'object' ? statusData?.requestId : null;
+
+    if (
+      masterClients.has(socket.id)
+      && requestId
+      && ['ended', 'stopped', 'interrupted'].includes(playbackStatus)
+    ) {
+      completeSchedulerPlayback(requestId, playbackStatus, socket.id);
+    }
+
     io.emit('client-audio-status', {
       clientId: client?.id || null,
-      status: status,
+      status: playbackStatus || 'unknown',
+      requestId: requestId || null,
       timestamp: new Date().toISOString()
     });
   });
@@ -918,6 +984,13 @@ io.on('connection', (socket) => {
   socket.on('disconnect', (reason) => {
     const client = connectedClients.get(socket.id);
     logInfo(`Client disconnected: ${client?.id || socket.id}, reason=${reason}`);
+
+    pendingSchedulerPlaybacks.forEach((pending, requestId) => {
+      if (pending.fromClientSocketId === socket.id) {
+        clearTimeout(pending.timeout);
+        pendingSchedulerPlaybacks.delete(requestId);
+      }
+    });
     
     // Save master preference for reconnection
     if (client && client.wantsToBeMaster) {

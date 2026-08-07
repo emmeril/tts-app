@@ -440,9 +440,6 @@
                             <audio id="masterAudioPlayer" 
                                    controls
                                    playsinline
-                                   @play="onAudioPlay()"
-                                   @pause="onAudioPause()"
-                                   @ended="onAudioEnd()"
                                    class="w-full rounded-lg border-2 border-gray-300"
                                    x-effect="if(currentAudio) { console.log('Master audio updated:', currentAudio.audioUrl); }">
                             </audio>
@@ -981,7 +978,7 @@
                         <label class="text-sm font-medium text-gray-700">Nama jadwal<input x-model="schedulerDraft.name" type="text" maxlength="80" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Contoh: Pengumuman pagi"></label>
                         <label class="text-sm font-medium text-gray-700">Jam mulai (seperti alarm)<input x-model="schedulerDraft.time" type="time" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"></label>
                         <div class="text-sm font-medium text-gray-700">Pengulangan alarm<select x-model="schedulerDraft.intervalMode" @change="updateDraftInterval()" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><option value="daily">Setiap hari</option><option value="hourly">Setiap jam</option><option value="custom">Interval lain</option></select><div x-show="schedulerDraft.intervalMode === 'custom'" class="mt-2 flex items-center gap-2"><input x-model.number="schedulerDraft.intervalMinutes" type="number" min="1" step="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 whitespace-nowrap">menit</span></div><span class="text-xs text-gray-500 font-normal">Mulai berbunyi pada jam yang dipilih.</span></div>
-                        <label class="text-sm font-medium text-gray-700">Jeda antar item<input x-model.number="schedulerDraft.itemIntervalSeconds" type="number" min="0" step="1" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Item 1, 2, 3 akan diputar berurutan (detik).</span></label>
+                        <label class="text-sm font-medium text-gray-700">Jeda setelah audio selesai<input x-model.number="schedulerDraft.itemIntervalSeconds" type="number" min="0" step="1" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Jeda dihitung setelah item sebelumnya selesai diputar (detik).</span></label>
                     </div>
                     <label class="flex items-center gap-2 text-sm text-gray-700"><input x-model="schedulerDraft.enabled" type="checkbox" class="w-4 h-4 text-primary-600 rounded"> Aktifkan jadwal ini</label>
                     <div class="border-t border-gray-200 pt-3">

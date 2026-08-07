@@ -44,6 +44,7 @@ function ttsApp() {
         schedulerDraft: null,
         schedulerTimer: null,
         runningScheduleIds: [],
+        schedulerItemWaiters: {},
         maxScheduleAudioSizeMb: 20,
         
         // UI Controls
@@ -537,6 +538,10 @@ function ttsApp() {
                         return;
                     }
 
+                    if (this.currentAudio?.requestId && this.currentAudio.requestId !== data.requestId && this.isPlaying) {
+                        this.emitAudioPlaybackStatus('interrupted', this.currentAudio);
+                    }
+
                     this.lastHandledRequestId = data.requestId || null;
 
                     // Store the audio data
@@ -616,6 +621,7 @@ function ttsApp() {
             this.socket.on('tts-error', (data) => {
                 this.isLoading = false;
                 if (data.schedulerId) {
+                    this.resolveScheduleItemWaiter({ ...data, status: 'error' });
                     this.showNotification(`Item ${data.schedulerItem || ''} scheduler gagal diproses`, 'error');
                     return;
                 }
@@ -644,8 +650,16 @@ function ttsApp() {
             });
 
             this.socket.on('audio-error', (data) => {
+                this.resolveScheduleItemWaiter({ ...data, status: 'error' });
                 const itemLabel = data.schedulerItem ? `Item ${data.schedulerItem} scheduler: ` : '';
                 this.showNotification(`${itemLabel}${this.getEventErrorMessage(data, 'Audio upload gagal diproses')}`, 'error');
+            });
+
+            this.socket.on('scheduler-item-finished', (data) => {
+                this.resolveScheduleItemWaiter(data);
+                if (data.status === 'timeout') {
+                    this.showNotification(`Timeout menunggu audio item ${data.schedulerItem || ''} selesai; scheduler dilanjutkan`, 'warning');
+                }
             });
 
             this.socket.on('play-audio-denied', (data) => {
@@ -664,7 +678,7 @@ function ttsApp() {
             
             this.socket.on('stop-audio-command', (data) => {
                 if (data.fromMaster) {
-                    this.stopAudio();
+                    this.stopAudio(false);
                     this.showNotification(`Master ${data.issuedBy?.substring(0, 8) || ''} menghentikan audio`, 'info');
                 }
             });
@@ -944,16 +958,15 @@ function ttsApp() {
             audioElement.load();
             
             audioElement.onplay = () => {
-                this.isPlaying = true;
+                this.onAudioPlay();
             };
             
             audioElement.onpause = () => {
-                this.isPlaying = false;
+                this.onAudioPause();
             };
             
             audioElement.onended = () => {
-                this.isPlaying = false;
-                this.showNotification('Audio selesai diputar', 'info');
+                this.onAudioEnd();
             };
             
             const playPromise = audioElement.play();
@@ -963,7 +976,7 @@ function ttsApp() {
                     this.isPlaying = true;
                     
                     if (this.socket && this.socket.connected) {
-                        this.socket.emit('audio-status', 'playing');
+                        this.emitAudioPlaybackStatus('playing');
                     }
                     
                     this.showNotification('Memutar audio...', 'success');
@@ -1041,7 +1054,7 @@ function ttsApp() {
 
                     this.isPlaying = true;
                     if (this.socket && this.socket.connected) {
-                        this.socket.emit('audio-status', 'playing');
+                        this.emitAudioPlaybackStatus('playing');
                     }
                     this.showNotification('Audio diputar otomatis', 'success');
                 }).catch((mutedError) => {
@@ -1075,13 +1088,13 @@ function ttsApp() {
                 audioElement.pause();
                 this.isPlaying = false;
                 if (this.socket && this.socket.connected) {
-                    this.socket.emit('audio-status', 'paused');
+                    this.emitAudioPlaybackStatus('paused');
                 }
             }
         },
         
         // Stop audio
-        stopAudio() {
+        stopAudio(notifyServer = true) {
             const audioElement = this.isMaster ? 
                 document.getElementById('masterAudioPlayer') : 
                 document.getElementById('hiddenAudio');
@@ -1091,29 +1104,43 @@ function ttsApp() {
                 audioElement.currentTime = 0;
                 this.isPlaying = false;
                 if (this.socket && this.socket.connected) {
-                    this.socket.emit('audio-status', 'stopped');
+                    this.emitAudioPlaybackStatus('stopped');
                 }
                 
-                if (this.isMaster && this.socket && this.socket.connected) {
+                if (notifyServer && this.isMaster && this.socket && this.socket.connected) {
                     this.socket.emit('stop-audio');
                 }
             }
         },
         
         // Audio event handlers
+        emitAudioPlaybackStatus(status, audio = this.currentAudio) {
+            if (!this.isMaster || !this.socket || !this.socket.connected) return;
+            this.socket.emit('audio-status', {
+                status,
+                requestId: audio?.requestId || null,
+                schedulerId: audio?.schedulerId || null,
+                schedulerRunId: audio?.schedulerRunId || null,
+                schedulerItem: audio?.schedulerItem || null
+            });
+        },
+
         onAudioPlay() {
             this.isPlaying = true;
             this.saveAudioState();
+            this.emitAudioPlaybackStatus('playing');
         },
         
         onAudioPause() {
             this.isPlaying = false;
             this.saveAudioState();
+            this.emitAudioPlaybackStatus('paused');
         },
         
         onAudioEnd() {
             this.isPlaying = false;
             this.saveAudioState();
+            this.emitAudioPlaybackStatus('ended');
             this.showNotification('Audio selesai diputar', 'info');
         },
         
@@ -1480,21 +1507,58 @@ function ttsApp() {
             });
         },
 
+        getScheduleWaiterKey(schedulerRunId, schedulerItem) {
+            return `${schedulerRunId || ''}:${schedulerItem || ''}`;
+        },
+
+        waitForScheduleItem(schedulerRunId, schedulerItem) {
+            const key = this.getScheduleWaiterKey(schedulerRunId, schedulerItem);
+            return new Promise(resolve => {
+                const timeout = setTimeout(() => {
+                    delete this.schedulerItemWaiters[key];
+                    resolve({ status: 'client-timeout', schedulerRunId, schedulerItem });
+                }, 31 * 60 * 1000);
+                this.schedulerItemWaiters[key] = {
+                    resolve: (data) => {
+                        clearTimeout(timeout);
+                        delete this.schedulerItemWaiters[key];
+                        resolve(data);
+                    }
+                };
+            });
+        },
+
+        resolveScheduleItemWaiter(data = {}) {
+            if (!data.schedulerRunId || !data.schedulerItem) return false;
+            const key = this.getScheduleWaiterKey(data.schedulerRunId, data.schedulerItem);
+            const waiter = this.schedulerItemWaiters[key];
+            if (!waiter) return false;
+            waiter.resolve(data);
+            return true;
+        },
+
         async runSchedule(schedule) {
             this.runningScheduleIds.push(schedule.id);
             this.showNotification(`Scheduler “${schedule.name}” mulai (${schedule.items.length} item)`, 'info');
+            const schedulerRunId = `run_${schedule.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             try {
                 for (let index = 0; index < schedule.items.length; index += 1) {
                     const item = schedule.items[index];
+                    const schedulerItem = index + 1;
                     const schedulerData = {
                         priority: item.priority || 'normal',
                         timestamp: new Date().toISOString(),
                         schedulerId: schedule.id,
                         schedulerName: schedule.name,
-                        schedulerItem: index + 1
+                        schedulerItem,
+                        schedulerRunId
                     };
+                    const playbackFinished = this.waitForScheduleItem(schedulerRunId, schedulerItem);
                     if (item.type === 'audio') {
-                        if (!item.audioUrl) continue;
+                        if (!item.audioUrl) {
+                            this.resolveScheduleItemWaiter({ ...schedulerData, status: 'skipped' });
+                            continue;
+                        }
                         this.socket.emit('audio-request', {
                             ...schedulerData,
                             audioUrl: item.audioUrl,
@@ -1504,7 +1568,10 @@ function ttsApp() {
                             format: item.audioFormat || 'audio/mpeg'
                         });
                     } else {
-                        if (!item.text) continue;
+                        if (!item.text) {
+                            this.resolveScheduleItemWaiter({ ...schedulerData, status: 'skipped' });
+                            continue;
+                        }
                         this.socket.emit('tts-request', {
                             ...schedulerData,
                             text: item.text,
@@ -1512,10 +1579,13 @@ function ttsApp() {
                             speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2))
                         });
                     }
+
+                    await playbackFinished;
                     if (index < schedule.items.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000));
                     }
                 }
+                this.showNotification(`Scheduler “${schedule.name}” selesai`, 'success');
             } finally {
                 this.runningScheduleIds = this.runningScheduleIds.filter(id => id !== schedule.id);
             }
