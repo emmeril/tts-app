@@ -38,12 +38,13 @@ function ttsApp() {
         history: [],
         notifications: [],
 
-        // Scheduler: jadwal alarm dan daftar teks custom
+        // Scheduler: jadwal alarm berisi TTS atau file audio upload
         schedules: [],
         showSchedulerModal: false,
         schedulerDraft: null,
         schedulerTimer: null,
         runningScheduleIds: [],
+        maxScheduleAudioSizeMb: 20,
         
         // UI Controls
         charCount: 0,
@@ -630,6 +631,23 @@ function ttsApp() {
                 });
             });
 
+            this.socket.on('audio-complete', (data) => {
+                if (data.schedulerId) {
+                    this.showNotification(`Audio item ${data.schedulerItem || ''} scheduler “${data.schedulerName || ''}” terkirim`, 'success');
+                    return;
+                }
+                this.showNotification(data.message || 'Audio upload berhasil dikirim', 'success');
+            });
+
+            this.socket.on('audio-queued', (data) => {
+                this.showNotification(data.message || 'Audio upload masuk antrian', 'info');
+            });
+
+            this.socket.on('audio-error', (data) => {
+                const itemLabel = data.schedulerItem ? `Item ${data.schedulerItem} scheduler: ` : '';
+                this.showNotification(`${itemLabel}${this.getEventErrorMessage(data, 'Audio upload gagal diproses')}`, 'error');
+            });
+
             this.socket.on('play-audio-denied', (data) => {
                 this.showNotification(this.getEventErrorMessage(data, 'Akses pemutaran audio ditolak'), 'warning');
             });
@@ -1150,7 +1168,19 @@ function ttsApp() {
 
         // ==================== Scheduler ====================
         newScheduleItem() {
-            return { text: '', language: this.language || 'id-ID', speed: Number(this.speed) || 1, priority: this.priority || 'normal' };
+            return {
+                type: 'tts',
+                text: '',
+                language: this.language || 'id-ID',
+                speed: Number(this.speed) || 1,
+                priority: this.priority || 'normal',
+                audioUrl: '',
+                audioName: '',
+                audioSize: 0,
+                audioDuration: null,
+                audioFormat: '',
+                uploading: false
+            };
         },
 
         openScheduler() {
@@ -1175,6 +1205,12 @@ function ttsApp() {
         editSchedule(schedule) {
             this.schedulerDraft = JSON.parse(JSON.stringify(schedule));
             this.schedulerDraft.items = this.schedulerDraft.items?.length ? this.schedulerDraft.items : [this.newScheduleItem()];
+            this.schedulerDraft.items = this.schedulerDraft.items.map(item => ({
+                ...this.newScheduleItem(),
+                ...item,
+                type: item.type === 'audio' || (!item.type && item.audioUrl) ? 'audio' : 'tts',
+                uploading: false
+            }));
             this.schedulerDraft.intervalMode = this.getScheduleIntervalMode(this.schedulerDraft.intervalMinutes);
             this.showSchedulerModal = true;
         },
@@ -1201,19 +1237,146 @@ function ttsApp() {
             this.schedulerDraft.items.splice(index, 1);
         },
 
+        getScheduleAudioType(file) {
+            const supportedTypes = {
+                'audio/mpeg': 'audio/mpeg',
+                'audio/mp3': 'audio/mpeg',
+                'audio/wav': 'audio/wav',
+                'audio/x-wav': 'audio/wav',
+                'audio/ogg': 'audio/ogg',
+                'audio/webm': 'audio/webm',
+                'audio/mp4': 'audio/mp4',
+                'audio/x-m4a': 'audio/mp4',
+                'audio/aac': 'audio/aac',
+                'audio/x-aac': 'audio/aac',
+                'audio/flac': 'audio/flac',
+                'audio/x-flac': 'audio/flac'
+            };
+            if (supportedTypes[file?.type]) return supportedTypes[file.type];
+
+            const extension = String(file?.name || '').split('.').pop().toLowerCase();
+            return {
+                mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', webm: 'audio/webm',
+                m4a: 'audio/mp4', mp4: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac'
+            }[extension] || '';
+        },
+
+        getLocalAudioDuration(file) {
+            return new Promise(resolve => {
+                const audio = document.createElement('audio');
+                const objectUrl = URL.createObjectURL(file);
+                let completed = false;
+                const timeout = setTimeout(() => finish(), 5000);
+                const finish = (duration = null) => {
+                    if (completed) return;
+                    completed = true;
+                    clearTimeout(timeout);
+                    audio.removeAttribute('src');
+                    URL.revokeObjectURL(objectUrl);
+                    resolve(Number.isFinite(duration) ? Math.round(duration * 10) / 10 : null);
+                };
+                audio.preload = 'metadata';
+                audio.onloadedmetadata = () => finish(audio.duration);
+                audio.onerror = () => finish();
+                audio.src = objectUrl;
+            });
+        },
+
+        async uploadScheduleAudio(event, item) {
+            const input = event?.target;
+            const file = input?.files?.[0];
+            if (!file || !item) return;
+
+            const format = this.getScheduleAudioType(file);
+            const maxBytes = this.maxScheduleAudioSizeMb * 1024 * 1024;
+            if (!format) {
+                input.value = '';
+                this.showNotification('Format tidak didukung. Pilih MP3, WAV, OGG, WebM, M4A, AAC, atau FLAC.', 'error');
+                return;
+            }
+            if (file.size > maxBytes) {
+                input.value = '';
+                this.showNotification(`File terlalu besar. Maksimal ${this.maxScheduleAudioSizeMb} MB.`, 'error');
+                return;
+            }
+
+            item.uploading = true;
+            item.uploadError = '';
+            try {
+                const durationPromise = this.getLocalAudioDuration(file);
+                const response = await fetch('/api/audio/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': format,
+                        'X-Audio-Name': encodeURIComponent(file.name)
+                    },
+                    body: file
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.success === false) {
+                    throw new Error(data.error || data.message || `Upload gagal (${response.status})`);
+                }
+
+                item.type = 'audio';
+                item.audioUrl = data.audioUrl;
+                item.audioName = data.fileName || file.name;
+                item.audioSize = data.size || file.size;
+                item.audioFormat = data.format || format;
+                item.audioDuration = await durationPromise;
+                this.showNotification(`Audio “${item.audioName}” berhasil di-upload`, 'success');
+            } catch (error) {
+                item.uploadError = error.message;
+                this.showNotification(`Upload audio gagal: ${error.message}`, 'error');
+            } finally {
+                item.uploading = false;
+                input.value = '';
+            }
+        },
+
+        formatFileSize(bytes) {
+            const value = Number(bytes) || 0;
+            if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+            return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+        },
+
+        getScheduleItemLabel(item) {
+            if (item?.type === 'audio') return `Audio: ${item.audioName || 'file upload'}`;
+            return item?.text || 'Teks kosong';
+        },
+
         saveSchedule() {
             const draft = this.schedulerDraft;
             if (!draft) return;
             const time = String(draft.time || '').match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-            const items = (draft.items || []).map(item => ({
-                text: String(item.text || '').trim(),
-                language: item.language || 'id-ID',
-                speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
-                priority: item.priority || 'normal'
-            })).filter(item => item.text);
 
             if (!time) return this.showNotification('Pilih jam scheduler yang valid (HH:MM)', 'error');
-            if (!items.length) return this.showNotification('Isi minimal satu teks custom untuk diputar', 'error');
+            if ((draft.items || []).some(item => item.uploading)) return this.showNotification('Tunggu proses upload audio selesai', 'warning');
+            if (!(draft.items || []).length) return this.showNotification('Tambahkan minimal satu item scheduler', 'error');
+            if (draft.items.some(item => item.type === 'audio' ? !item.audioUrl : !String(item.text || '').trim())) {
+                return this.showNotification('Lengkapi teks atau upload file pada setiap item scheduler', 'error');
+            }
+
+            const items = draft.items.map(item => {
+                const type = item.type === 'audio' ? 'audio' : 'tts';
+                if (type === 'audio') {
+                    return {
+                        type,
+                        audioUrl: item.audioUrl,
+                        audioName: item.audioName || 'Audio upload',
+                        audioSize: Number(item.audioSize) || 0,
+                        audioDuration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
+                        audioFormat: item.audioFormat || 'audio/mpeg',
+                        priority: item.priority || 'normal'
+                    };
+                }
+                return {
+                    type,
+                    text: String(item.text || '').trim(),
+                    language: item.language || 'id-ID',
+                    speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
+                    priority: item.priority || 'normal'
+                };
+            });
 
             const intervalMinutes = draft.intervalMode === 'daily'
                 ? 1440
@@ -1256,7 +1419,13 @@ function ttsApp() {
         loadSchedules() {
             try {
                 const saved = JSON.parse(localStorage.getItem('ttsSchedules') || '[]');
-                this.schedules = Array.isArray(saved) ? saved : [];
+                this.schedules = Array.isArray(saved) ? saved.map(schedule => ({
+                    ...schedule,
+                    items: Array.isArray(schedule.items) ? schedule.items.map(item => ({
+                        ...item,
+                        type: item.type === 'audio' || (!item.type && item.audioUrl) ? 'audio' : 'tts'
+                    })) : []
+                })) : [];
             } catch (error) {
                 console.error('Failed to load schedules:', error);
                 this.schedules = [];
@@ -1317,17 +1486,32 @@ function ttsApp() {
             try {
                 for (let index = 0; index < schedule.items.length; index += 1) {
                     const item = schedule.items[index];
-                    if (!item.text) continue;
-                    this.socket.emit('tts-request', {
-                        text: item.text,
-                        language: item.language || 'id-ID',
-                        speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
+                    const schedulerData = {
                         priority: item.priority || 'normal',
                         timestamp: new Date().toISOString(),
                         schedulerId: schedule.id,
                         schedulerName: schedule.name,
                         schedulerItem: index + 1
-                    });
+                    };
+                    if (item.type === 'audio') {
+                        if (!item.audioUrl) continue;
+                        this.socket.emit('audio-request', {
+                            ...schedulerData,
+                            audioUrl: item.audioUrl,
+                            fileName: item.audioName || 'Audio upload',
+                            audioSize: Number(item.audioSize) || null,
+                            duration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
+                            format: item.audioFormat || 'audio/mpeg'
+                        });
+                    } else {
+                        if (!item.text) continue;
+                        this.socket.emit('tts-request', {
+                            ...schedulerData,
+                            text: item.text,
+                            language: item.language || 'id-ID',
+                            speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2))
+                        });
+                    }
                     if (index < schedule.items.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000));
                     }

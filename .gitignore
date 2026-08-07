@@ -1,3 +1,5 @@
 backend/node_modules
 backend/.env
 backend/pnpm-lock.yaml
+backend/uploads/*
+!backend/uploads/.gitkeep

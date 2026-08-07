@@ -428,9 +428,9 @@
                             </div>
                             <div class="flex items-center space-x-2">
                                 <span class="px-2 sm:px-3 py-1 bg-gray-100 rounded-full text-xs sm:text-sm font-medium" 
-                                      x-text="currentAudio?.duration + 's'"></span>
+                                      x-text="currentAudio?.duration != null ? currentAudio.duration + 's' : 'Audio upload'"></span>
                                 <span class="px-2 sm:px-3 py-1 bg-primary-50 text-primary-700 rounded-full text-xs sm:text-sm font-medium"
-                                      x-text="getLanguageName(currentAudio?.language)"></span>
+                                      x-text="currentAudio?.sourceType === 'upload' ? (currentAudio.fileName || 'File audio') : getLanguageName(currentAudio?.language)"></span>
                             </div>
                         </div>
                         
@@ -962,8 +962,8 @@
                         <div class="p-3 border border-gray-200 rounded-xl flex items-start justify-between gap-3" :class="schedule.enabled ? 'bg-white' : 'bg-gray-50 opacity-70'">
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2"><span class="text-xl font-bold text-primary-700" x-text="schedule.time"></span><span class="font-medium truncate" x-text="schedule.name"></span></div>
-                                <p class="text-xs text-gray-500 mt-1"><span x-text="formatScheduleInterval(schedule.intervalMinutes)"></span> · <span x-text="schedule.items.length + ' item custom'"></span> · jeda <span x-text="schedule.itemIntervalSeconds + ' dtk'"></span></p>
-                                <p class="text-xs text-gray-500 mt-1 truncate" x-text="schedule.items.map(item => item.text).join(' • ')"></p>
+                                <p class="text-xs text-gray-500 mt-1"><span x-text="formatScheduleInterval(schedule.intervalMinutes)"></span> · <span x-text="schedule.items.length + ' item'"></span> · jeda <span x-text="schedule.itemIntervalSeconds + ' dtk'"></span></p>
+                                <p class="text-xs text-gray-500 mt-1 truncate" x-text="schedule.items.map(item => getScheduleItemLabel(item)).join(' • ')"></p>
                             </div>
                             <div class="flex items-center gap-1 shrink-0">
                                 <button @click="toggleSchedule(schedule)" class="p-2 rounded-lg hover:bg-gray-100" :title="schedule.enabled ? 'Nonaktifkan' : 'Aktifkan'"><i class="fas" :class="schedule.enabled ? 'fa-toggle-on text-green-500' : 'fa-toggle-off text-gray-400'"></i></button>
@@ -985,12 +985,28 @@
                     </div>
                     <label class="flex items-center gap-2 text-sm text-gray-700"><input x-model="schedulerDraft.enabled" type="checkbox" class="w-4 h-4 text-primary-600 rounded"> Aktifkan jadwal ini</label>
                     <div class="border-t border-gray-200 pt-3">
-                        <div class="flex items-center justify-between mb-2"><h3 class="font-medium text-gray-900">Teks custom yang diputar</h3><button type="button" @click="addScheduleItem()" class="px-2 py-1 text-sm text-primary-700 hover:bg-primary-50 rounded"><i class="fas fa-plus mr-1"></i>Tambah item</button></div>
+                        <div class="flex items-center justify-between mb-2"><div><h3 class="font-medium text-gray-900">Item yang diputar</h3><p class="text-xs text-gray-500">Pilih teks TTS atau upload file audio dari perangkat.</p></div><button type="button" @click="addScheduleItem()" class="px-2 py-1 text-sm text-primary-700 hover:bg-primary-50 rounded"><i class="fas fa-plus mr-1"></i>Tambah item</button></div>
                         <div class="space-y-3 max-h-72 overflow-y-auto pr-1">
                             <template x-for="(item, index) in schedulerDraft.items" :key="index">
                                 <div class="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                    <div class="flex items-start gap-2"><span class="mt-2 w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center" x-text="index + 1"></span><textarea x-model="item.text" rows="2" maxlength="5000" required class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" :placeholder="`Teks custom ${index + 1}`"></textarea><button type="button" @click="removeScheduleItem(index)" :disabled="schedulerDraft.items.length <= 1" class="p-2 text-red-500 disabled:text-gray-300"><i class="fas fa-trash"></i></button></div>
-                                    <div class="grid grid-cols-2 gap-2 mt-2"><select x-model="item.language" class="px-2 py-1.5 border border-gray-300 rounded text-xs"><template x-for="lang in languages" :key="lang.code"><option :value="lang.code" x-text="lang.name"></option></template></select><input x-model.number="item.speed" type="number" min="0.5" max="2" step="0.1" class="px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Kecepatan"></div>
+                                    <div class="flex items-center gap-2 mb-2"><span class="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center" x-text="index + 1"></span><select x-model="item.type" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm"><option value="tts">Teks TTS</option><option value="audio">Upload audio</option></select><button type="button" @click="removeScheduleItem(index)" :disabled="schedulerDraft.items.length <= 1" class="p-2 text-red-500 disabled:text-gray-300"><i class="fas fa-trash"></i></button></div>
+                                    <div x-show="item.type !== 'audio'">
+                                        <textarea x-model="item.text" rows="2" maxlength="5000" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" :placeholder="`Teks custom ${index + 1}`"></textarea>
+                                        <div class="grid grid-cols-2 gap-2 mt-2"><select x-model="item.language" class="px-2 py-1.5 border border-gray-300 rounded text-xs"><template x-for="lang in languages" :key="lang.code"><option :value="lang.code" x-text="lang.name"></option></template></select><input x-model.number="item.speed" type="number" min="0.5" max="2" step="0.1" class="px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Kecepatan"></div>
+                                    </div>
+                                    <div x-show="item.type === 'audio'" class="space-y-2">
+                                        <label class="block p-3 border-2 border-dashed border-gray-300 hover:border-primary-400 rounded-lg bg-white cursor-pointer text-center text-sm text-gray-600">
+                                            <input type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/webm,audio/mp4,audio/aac,audio/flac,.mp3,.wav,.ogg,.webm,.m4a,.aac,.flac" @change="uploadScheduleAudio($event, item)" class="hidden">
+                                            <i class="fas" :class="item.uploading ? 'fa-spinner fa-spin text-primary-500' : 'fa-upload text-primary-500'"></i>
+                                            <span class="ml-1" x-text="item.uploading ? 'Meng-upload...' : (item.audioUrl ? 'Ganti file audio' : 'Pilih file audio')"></span>
+                                            <span class="block text-xs text-gray-400 mt-1" x-text="`MP3, WAV, OGG, WebM, M4A, AAC, FLAC · maks. ${maxScheduleAudioSizeMb} MB`"></span>
+                                        </label>
+                                        <div x-show="item.audioUrl" class="p-2 bg-green-50 border border-green-200 rounded-lg">
+                                            <div class="flex items-center justify-between gap-2 text-xs"><span class="font-medium text-green-800 truncate"><i class="fas fa-file-audio mr-1"></i><span x-text="item.audioName"></span></span><span class="text-green-700 shrink-0" x-text="formatFileSize(item.audioSize)"></span></div>
+                                            <audio controls preload="metadata" :src="item.audioUrl" class="w-full h-9 mt-2"></audio>
+                                        </div>
+                                        <p x-show="item.uploadError" class="text-xs text-red-600" x-text="item.uploadError"></p>
+                                    </div>
                                 </div>
                             </template>
                         </div>

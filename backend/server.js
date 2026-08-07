@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const morgan = require('morgan');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
@@ -12,6 +14,9 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const MAX_TTS_TEXT_LENGTH = 5000;
 const MAX_QUEUE_LENGTH = parseInt(process.env.MAX_QUEUE_LENGTH, 10) || 100;
+const MAX_UPLOAD_AUDIO_SIZE_MB = parseInt(process.env.MAX_UPLOAD_AUDIO_SIZE_MB, 10) || 20;
+const MAX_UPLOAD_AUDIO_SIZE = MAX_UPLOAD_AUDIO_SIZE_MB * 1024 * 1024;
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const SOCKET_AUTH_TOKEN = process.env.SOCKET_AUTH_TOKEN || '';
 const defaultAllowedOrigins = [
@@ -23,6 +28,21 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || defaultAllowedOrigins.joi
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const supportedAudioTypes = new Map([
+  ['audio/mpeg', '.mp3'],
+  ['audio/mp3', '.mp3'],
+  ['audio/wav', '.wav'],
+  ['audio/x-wav', '.wav'],
+  ['audio/ogg', '.ogg'],
+  ['audio/webm', '.webm'],
+  ['audio/mp4', '.m4a'],
+  ['audio/aac', '.aac'],
+  ['audio/flac', '.flac'],
+  ['audio/x-flac', '.flac']
+]);
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const isAllowedOrigin = (origin) => {
   if (!origin) {
@@ -206,16 +226,78 @@ const emitTtsAudioToMasters = (result, request) => {
   });
 };
 
+const getUploadedAudio = (audioUrl) => {
+  if (typeof audioUrl !== 'string' || audioUrl.length > 300) {
+    return null;
+  }
+
+  let pathname;
+  try {
+    pathname = new URL(audioUrl, 'http://local').pathname;
+  } catch (error) {
+    return null;
+  }
+
+  const match = pathname.match(/^\/api\/audio\/files\/(audio_[a-z0-9_-]+\.(?:mp3|wav|ogg|webm|m4a|aac|flac))$/i);
+  if (!match) {
+    return null;
+  }
+
+  const filename = match[1];
+  const filePath = path.join(UPLOAD_DIR, filename);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return null;
+  }
+
+  return { filename, filePath, audioUrl: `/api/audio/files/${filename}` };
+};
+
+const emitUploadedAudioToMasters = (request) => {
+  const uploadedAudio = getUploadedAudio(request.audioUrl);
+  if (!uploadedAudio) {
+    throw new Error('File audio upload tidak ditemukan');
+  }
+
+  emitTtsAudioToMasters({
+    success: true,
+    audioUrl: uploadedAudio.audioUrl,
+    duration: request.duration !== null && request.duration !== undefined && Number.isFinite(Number(request.duration))
+      ? Number(request.duration)
+      : null,
+    format: request.format || 'audio/mpeg',
+    sourceType: 'upload',
+    fileName: String(request.fileName || 'Audio upload').slice(0, 160),
+    audioSize: Number(request.audioSize) || null
+  }, request);
+};
+
 const processQueuedMasterRequests = async () => {
   if (masterClients.size === 0 || masterRequestQueue.length === 0) {
     return;
   }
 
   const queuedRequests = masterRequestQueue.splice(0, masterRequestQueue.length);
-  logInfo(`Processing queued TTS requests: count=${queuedRequests.length}, masters=${masterClients.size}`);
+  logInfo(`Processing queued master requests: count=${queuedRequests.length}, masters=${masterClients.size}`);
 
   for (const request of queuedRequests) {
     try {
+      if (request.kind === 'audio') {
+        emitUploadedAudioToMasters(request);
+
+        if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
+          io.to(request.fromClientSocketId).emit('audio-complete', {
+            success: true,
+            message: `Audio upload antrian telah dikirim ke ${masterClients.size} Master Controller`,
+            masterCount: masterClients.size,
+            queued: true,
+            schedulerId: request.schedulerId || null,
+            schedulerName: request.schedulerName || null,
+            schedulerItem: request.schedulerItem || null
+          });
+        }
+        continue;
+      }
+
       const result = await googleTTSService.convertTextToSpeech({
         text: request.text,
         language: request.language || 'id-ID',
@@ -239,10 +321,13 @@ const processQueuedMasterRequests = async () => {
         });
       }
     } catch (error) {
-      logError(`Failed to process queued TTS request from ${request.fromClientId}`, error.message);
+      logError(`Failed to process queued master request from ${request.fromClientId}`, error.message);
 
       if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
-        emitSocketError(io.to(request.fromClientSocketId), 'tts-error', `Gagal memproses antrian TTS (Detail: ${error.message})`, {
+        const isUploadedAudio = request.kind === 'audio';
+        const errorEvent = isUploadedAudio ? 'audio-error' : 'tts-error';
+        const requestLabel = isUploadedAudio ? 'audio upload' : 'TTS';
+        emitSocketError(io.to(request.fromClientSocketId), errorEvent, `Gagal memproses antrian ${requestLabel} (Detail: ${error.message})`, {
           queued: true
         });
       }
@@ -702,6 +787,83 @@ io.on('connection', (socket) => {
       });
     }
   });
+
+  // Handle file audio yang sebelumnya sudah di-upload oleh scheduler.
+  socket.on('audio-request', (data = {}) => {
+    const client = connectedClients.get(socket.id);
+
+    try {
+      if (!client) {
+        emitSocketError(socket, 'audio-error', 'Client tidak valid atau koneksi sudah berakhir');
+        return;
+      }
+
+      const uploadedAudio = getUploadedAudio(data.audioUrl);
+      if (!uploadedAudio) {
+        emitSocketError(socket, 'audio-error', 'File audio upload tidak ditemukan atau URL tidak valid', {
+          schedulerId: data.schedulerId || null,
+          schedulerName: data.schedulerName || null,
+          schedulerItem: data.schedulerItem || null
+        });
+        return;
+      }
+
+      const request = {
+        ...data,
+        kind: 'audio',
+        audioUrl: uploadedAudio.audioUrl,
+        fromClientId: client.id,
+        fromClientSocketId: socket.id,
+        timestamp: new Date().toISOString(),
+        priority: data.priority || 'normal'
+      };
+
+      if (masterClients.size === 0) {
+        const queuedForClient = masterRequestQueue.filter((item) => item.fromClientSocketId === socket.id).length;
+        const maxQueuedPerClient = parseInt(process.env.MAX_QUEUE_PER_CLIENT, 10) || 5;
+
+        if (masterRequestQueue.length >= MAX_QUEUE_LENGTH || queuedForClient >= maxQueuedPerClient) {
+          emitSocketError(socket, 'audio-error', 'Antrian audio penuh. Coba lagi setelah Master aktif.', {
+            queueFull: true,
+            schedulerId: data.schedulerId || null
+          });
+          return;
+        }
+
+        masterRequestQueue.push(request);
+        socket.emit('audio-queued', {
+          success: true,
+          message: 'Audio upload masuk antrian. Menunggu Master Controller...',
+          queuePosition: masterRequestQueue.length,
+          schedulerId: data.schedulerId || null,
+          schedulerName: data.schedulerName || null,
+          schedulerItem: data.schedulerItem || null
+        });
+        io.emit('master-needed', {
+          message: 'Master controller diperlukan untuk memproses audio',
+          pendingRequests: masterRequestQueue.length
+        });
+        return;
+      }
+
+      emitUploadedAudioToMasters(request);
+      socket.emit('audio-complete', {
+        success: true,
+        message: `Audio upload telah dikirim ke ${masterClients.size} Master Controller`,
+        masterCount: masterClients.size,
+        schedulerId: data.schedulerId || null,
+        schedulerName: data.schedulerName || null,
+        schedulerItem: data.schedulerItem || null
+      });
+    } catch (error) {
+      logError(`Uploaded audio error for ${client?.id || socket.id}`, error.message);
+      emitSocketError(socket, 'audio-error', `Gagal mengirim audio upload (Detail: ${error.message})`, {
+        schedulerId: data.schedulerId || null,
+        schedulerName: data.schedulerName || null,
+        schedulerItem: data.schedulerItem || null
+      });
+    }
+  });
   
   // Handle client requesting to play audio (master only)
   socket.on('play-audio', () => {
@@ -841,6 +1003,50 @@ setInterval(() => {
 }, 60 * 1000); // Check every minute
 
 // API Routes
+app.post('/api/audio/upload', express.raw({ type: () => true, limit: MAX_UPLOAD_AUDIO_SIZE }), async (req, res) => {
+  const contentType = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const extension = supportedAudioTypes.get(contentType);
+
+  if (!extension) {
+    return sendApiError(res, 415, 'Format audio tidak didukung. Gunakan MP3, WAV, OGG, WebM, M4A, AAC, atau FLAC.');
+  }
+
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return sendApiError(res, 400, 'File audio kosong');
+  }
+
+  const filename = `audio_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${extension}`;
+  const filePath = path.join(UPLOAD_DIR, filename);
+  await fs.promises.writeFile(filePath, req.body, { flag: 'wx' });
+
+  let originalName = 'Audio upload';
+  try {
+    originalName = decodeURIComponent(req.get('x-audio-name') || originalName).slice(0, 160);
+  } catch (error) {
+    originalName = 'Audio upload';
+  }
+
+  return res.status(201).json({
+    success: true,
+    audioUrl: `/api/audio/files/${filename}`,
+    fileName: originalName,
+    size: req.body.length,
+    format: contentType,
+    maxSizeMb: MAX_UPLOAD_AUDIO_SIZE_MB
+  });
+});
+
+app.get('/api/audio/files/:filename', (req, res) => {
+  const uploadedAudio = getUploadedAudio(`/api/audio/files/${req.params.filename}`);
+  if (!uploadedAudio) {
+    return sendApiError(res, 404, 'File audio tidak ditemukan');
+  }
+
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Cache-Control', 'public, max-age=86400');
+  return res.sendFile(uploadedAudio.filePath);
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
@@ -1160,6 +1366,9 @@ app.get('/api/master-preference/:clientId', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   logError('Server error', err.stack);
+  if (err.type === 'entity.too.large') {
+    return sendApiError(res, 413, `File audio terlalu besar. Maksimal ${MAX_UPLOAD_AUDIO_SIZE_MB} MB.`);
+  }
   sendApiError(res, 500, 'Terjadi kesalahan internal server', {
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
@@ -1190,6 +1399,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   GET  ${serverUrl}/api/stats       - Statistik server`);
   console.log(`   POST ${serverUrl}/api/add-master  - Tambah client sebagai master`);
   console.log(`   POST ${serverUrl}/api/tts         - Konversi teks ke suara`);
+  console.log(`   POST ${serverUrl}/api/audio/upload - Upload audio scheduler`);
   console.log(`   GET  ${serverUrl}/api/languages   - Daftar bahasa yang didukung`);
   console.log(`   POST ${serverUrl}/api/clear-queue - Hapus antrian TTS`);
   console.log(`   GET  ${serverUrl}/api/client-status/:clientId - Cek status client`);
