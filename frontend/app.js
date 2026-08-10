@@ -1229,6 +1229,7 @@ function ttsApp() {
                 name: `Jadwal ${this.schedules.length + 1}`,
                 time: '07:00',
                 days: this.scheduleDayOptions.map(day => day.value),
+                selectedDay: 'all',
                 itemIntervalSeconds: 0,
                 enabled: true,
                 items: [this.newScheduleItem()]
@@ -1238,7 +1239,11 @@ function ttsApp() {
 
         editSchedule(schedule) {
             this.schedulerDraft = JSON.parse(JSON.stringify(schedule));
-            this.schedulerDraft.days = this.normalizeScheduleDays(this.schedulerDraft.days);
+            const normalizedDays = this.normalizeScheduleDays(this.schedulerDraft.days);
+            this.schedulerDraft.days = normalizedDays;
+            this.schedulerDraft.selectedDay = normalizedDays.length === 7
+                ? 'all'
+                : String(normalizedDays[0] ?? 1);
             const audioItems = Array.isArray(this.schedulerDraft.items)
                 ? this.schedulerDraft.items.filter(item => item?.audioUrl || item?.type === 'audio')
                 : [];
@@ -1419,7 +1424,10 @@ function ttsApp() {
             const draft = this.schedulerDraft;
             if (!draft) return;
             const time = String(draft.time || '').match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-            const days = this.normalizeScheduleDays(draft.days, false);
+            const selectedDays = draft.selectedDay === 'all'
+                ? this.scheduleDayOptions.map(day => day.value)
+                : [Number(draft.selectedDay)];
+            const days = this.normalizeScheduleDays(selectedDays, false);
 
             if (!time) return this.showNotification('Pilih jam scheduler yang valid (HH:MM)', 'error');
             if (!days.length) return this.showNotification('Pilih minimal satu hari untuk scheduler', 'error');

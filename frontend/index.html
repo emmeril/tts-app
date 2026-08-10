@@ -979,18 +979,15 @@
                         <label class="text-sm font-medium text-gray-700">Nama jadwal<input x-model="schedulerDraft.name" type="text" maxlength="80" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Contoh: Alarm buka toko"></label>
                         <label class="text-sm font-medium text-gray-700">Jam alarm<input x-model="schedulerDraft.time" type="time" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Mengikuti waktu pada perangkat ini.</span></label>
                     </div>
-                    <fieldset>
-                        <legend class="text-sm font-medium text-gray-700 mb-2">Hari aktif</legend>
-                        <div class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                    <label class="block text-sm font-medium text-gray-700">Hari aktif
+                        <select x-model="schedulerDraft.selectedDay" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            <option value="all">Setiap hari (Senin–Minggu)</option>
                             <template x-for="day in scheduleDayOptions" :key="day.value">
-                                <label class="cursor-pointer">
-                                    <input type="checkbox" class="sr-only" :checked="isDraftDaySelected(day.value)" @change="toggleDraftDay(day.value)">
-                                    <span class="h-10 flex items-center justify-center border rounded-lg text-xs sm:text-sm font-medium transition-colors" :class="isDraftDaySelected(day.value) ? 'bg-primary-500 border-primary-500 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-primary-300'" x-text="day.shortLabel"></span>
-                                </label>
+                                <option :value="String(day.value)" x-text="day.label"></option>
                             </template>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-2" x-text="formatScheduleDays(schedulerDraft.days)"></p>
-                    </fieldset>
+                        </select>
+                        <span class="text-xs text-gray-500 font-normal">Pilih satu hari atau aktifkan setiap hari.</span>
+                    </label>
                     <label class="flex items-center gap-2 text-sm text-gray-700"><input x-model="schedulerDraft.enabled" type="checkbox" class="w-4 h-4 text-primary-600 rounded"> Aktifkan jadwal ini</label>
                     <div class="border-t border-gray-200 pt-3">
                         <div class="flex items-center justify-between gap-3 mb-2"><div><h3 class="font-medium text-gray-900">File audio</h3><p class="text-xs text-gray-500">Atur jumlah putar dan jeda untuk setiap audio.</p></div><button type="button" @click="addScheduleItem()" class="shrink-0 px-2 py-1 text-sm text-primary-700 hover:bg-primary-50 rounded"><i class="fas fa-plus mr-1"></i>Tambah audio</button></div>
