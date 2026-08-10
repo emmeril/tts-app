@@ -38,7 +38,7 @@ function ttsApp() {
         history: [],
         notifications: [],
 
-        // Scheduler: jadwal alarm berisi TTS atau file audio upload
+        // Scheduler alarm mingguan khusus file audio upload
         schedules: [],
         showSchedulerModal: false,
         schedulerDraft: null,
@@ -46,6 +46,15 @@ function ttsApp() {
         runningScheduleIds: [],
         schedulerItemWaiters: {},
         maxScheduleAudioSizeMb: 20,
+        scheduleDayOptions: [
+            { value: 1, label: 'Senin', shortLabel: 'Sen' },
+            { value: 2, label: 'Selasa', shortLabel: 'Sel' },
+            { value: 3, label: 'Rabu', shortLabel: 'Rab' },
+            { value: 4, label: 'Kamis', shortLabel: 'Kam' },
+            { value: 5, label: 'Jumat', shortLabel: 'Jum' },
+            { value: 6, label: 'Sabtu', shortLabel: 'Sab' },
+            { value: 0, label: 'Minggu', shortLabel: 'Min' }
+        ],
         
         // UI Controls
         charCount: 0,
@@ -1196,16 +1205,15 @@ function ttsApp() {
         // ==================== Scheduler ====================
         newScheduleItem() {
             return {
-                type: 'tts',
-                text: '',
-                language: this.language || 'id-ID',
-                speed: Number(this.speed) || 1,
+                type: 'audio',
                 priority: this.priority || 'normal',
                 audioUrl: '',
                 audioName: '',
                 audioSize: 0,
                 audioDuration: null,
                 audioFormat: '',
+                repeatCount: 1,
+                repeatIntervalSeconds: 10,
                 uploading: false
             };
         },
@@ -1220,9 +1228,8 @@ function ttsApp() {
                 id: null,
                 name: `Jadwal ${this.schedules.length + 1}`,
                 time: '07:00',
-                intervalMode: 'daily',
-                intervalMinutes: 1440,
-                itemIntervalSeconds: 3,
+                days: this.scheduleDayOptions.map(day => day.value),
+                itemIntervalSeconds: 0,
                 enabled: true,
                 items: [this.newScheduleItem()]
             };
@@ -1231,28 +1238,65 @@ function ttsApp() {
 
         editSchedule(schedule) {
             this.schedulerDraft = JSON.parse(JSON.stringify(schedule));
-            this.schedulerDraft.items = this.schedulerDraft.items?.length ? this.schedulerDraft.items : [this.newScheduleItem()];
-            this.schedulerDraft.items = this.schedulerDraft.items.map(item => ({
+            this.schedulerDraft.days = this.normalizeScheduleDays(this.schedulerDraft.days);
+            const audioItems = Array.isArray(this.schedulerDraft.items)
+                ? this.schedulerDraft.items.filter(item => item?.audioUrl || item?.type === 'audio')
+                : [];
+            this.schedulerDraft.items = (audioItems.length ? audioItems : [this.newScheduleItem()]).map(item => ({
                 ...this.newScheduleItem(),
                 ...item,
-                type: item.type === 'audio' || (!item.type && item.audioUrl) ? 'audio' : 'tts',
+                type: 'audio',
+                repeatCount: Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1))),
+                repeatIntervalSeconds: item.repeatIntervalSeconds === undefined
+                    ? 10
+                    : Math.min(3600, Math.max(0, Math.round(Number(item.repeatIntervalSeconds) || 0))),
                 uploading: false
             }));
-            this.schedulerDraft.intervalMode = this.getScheduleIntervalMode(this.schedulerDraft.intervalMinutes);
             this.showSchedulerModal = true;
         },
 
-        getScheduleIntervalMode(minutes) {
-            const value = Number(minutes) || 1440;
-            if (value === 1440) return 'daily';
-            if (value === 60) return 'hourly';
-            return 'custom';
+        normalizeScheduleDays(days, useAllAsDefault = true) {
+            const validDays = new Set(this.scheduleDayOptions.map(day => day.value));
+            const normalized = Array.isArray(days)
+                ? [...new Set(days.map(Number).filter(day => validDays.has(day)))]
+                : [];
+            if (!normalized.length && useAllAsDefault) {
+                return this.scheduleDayOptions.map(day => day.value);
+            }
+            return this.scheduleDayOptions
+                .map(day => day.value)
+                .filter(day => normalized.includes(day));
         },
 
-        updateDraftInterval() {
+        toggleDraftDay(day) {
             if (!this.schedulerDraft) return;
-            if (this.schedulerDraft.intervalMode === 'daily') this.schedulerDraft.intervalMinutes = 1440;
-            if (this.schedulerDraft.intervalMode === 'hourly') this.schedulerDraft.intervalMinutes = 60;
+            const selectedDays = this.normalizeScheduleDays(this.schedulerDraft.days, false);
+            this.schedulerDraft.days = selectedDays.includes(day)
+                ? selectedDays.filter(value => value !== day)
+                : this.normalizeScheduleDays([...selectedDays, day], false);
+        },
+
+        isDraftDaySelected(day) {
+            return Array.isArray(this.schedulerDraft?.days) && this.schedulerDraft.days.map(Number).includes(day);
+        },
+
+        formatScheduleDays(days) {
+            const normalized = this.normalizeScheduleDays(days, false);
+            if (normalized.length === 7) return 'Setiap hari';
+            if (normalized.length === 5 && [1, 2, 3, 4, 5].every(day => normalized.includes(day))) {
+                return 'Senin–Jumat';
+            }
+            return this.scheduleDayOptions
+                .filter(day => normalized.includes(day.value))
+                .map(day => day.label)
+                .join(', ') || 'Belum memilih hari';
+        },
+
+        getScheduleTotalPlays(schedule) {
+            return (schedule?.items || []).reduce(
+                (total, item) => total + Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1))),
+                0
+            );
         },
 
         addScheduleItem() {
@@ -1367,54 +1411,42 @@ function ttsApp() {
         },
 
         getScheduleItemLabel(item) {
-            if (item?.type === 'audio') return `Audio: ${item.audioName || 'file upload'}`;
-            return item?.text || 'Teks kosong';
+            const repeatCount = Math.min(100, Math.max(1, Math.round(Number(item?.repeatCount) || 1)));
+            return `${item?.audioName || 'File audio belum dipilih'} (${repeatCount}x)`;
         },
 
         saveSchedule() {
             const draft = this.schedulerDraft;
             if (!draft) return;
             const time = String(draft.time || '').match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
+            const days = this.normalizeScheduleDays(draft.days, false);
 
             if (!time) return this.showNotification('Pilih jam scheduler yang valid (HH:MM)', 'error');
+            if (!days.length) return this.showNotification('Pilih minimal satu hari untuk scheduler', 'error');
             if ((draft.items || []).some(item => item.uploading)) return this.showNotification('Tunggu proses upload audio selesai', 'warning');
-            if (!(draft.items || []).length) return this.showNotification('Tambahkan minimal satu item scheduler', 'error');
-            if (draft.items.some(item => item.type === 'audio' ? !item.audioUrl : !String(item.text || '').trim())) {
-                return this.showNotification('Lengkapi teks atau upload file pada setiap item scheduler', 'error');
+            if (!(draft.items || []).length) return this.showNotification('Tambahkan minimal satu file audio', 'error');
+            if (draft.items.some(item => !item.audioUrl)) {
+                return this.showNotification('Upload file audio pada setiap item scheduler', 'error');
             }
 
-            const items = draft.items.map(item => {
-                const type = item.type === 'audio' ? 'audio' : 'tts';
-                if (type === 'audio') {
-                    return {
-                        type,
-                        audioUrl: item.audioUrl,
-                        audioName: item.audioName || 'Audio upload',
-                        audioSize: Number(item.audioSize) || 0,
-                        audioDuration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
-                        audioFormat: item.audioFormat || 'audio/mpeg',
-                        priority: item.priority || 'normal'
-                    };
-                }
-                return {
-                    type,
-                    text: String(item.text || '').trim(),
-                    language: item.language || 'id-ID',
-                    speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2)),
-                    priority: item.priority || 'normal'
-                };
-            });
-
-            const intervalMinutes = draft.intervalMode === 'daily'
-                ? 1440
-                : (draft.intervalMode === 'hourly' ? 60 : Math.max(1, Math.round(Number(draft.intervalMinutes) || 15)));
+            const items = draft.items.map(item => ({
+                type: 'audio',
+                audioUrl: item.audioUrl,
+                audioName: item.audioName || 'Audio upload',
+                audioSize: Number(item.audioSize) || 0,
+                audioDuration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
+                audioFormat: item.audioFormat || 'audio/mpeg',
+                repeatCount: Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1))),
+                repeatIntervalSeconds: Math.min(3600, Math.max(0, Math.round(Number(item.repeatIntervalSeconds) || 0))),
+                priority: item.priority || 'normal'
+            }));
 
             const schedule = {
                 id: draft.id || `schedule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 name: String(draft.name || '').trim() || 'Jadwal tanpa nama',
                 time: draft.time,
-                intervalMinutes,
-                itemIntervalSeconds: Math.max(0, Math.round(Number(draft.itemIntervalSeconds) || 0)),
+                days,
+                itemIntervalSeconds: Math.min(3600, Math.max(0, Math.round(Number(draft.itemIntervalSeconds) || 0))),
                 enabled: draft.enabled !== false,
                 items,
                 lastRunAt: draft.lastRunAt || null
@@ -1446,13 +1478,27 @@ function ttsApp() {
         loadSchedules() {
             try {
                 const saved = JSON.parse(localStorage.getItem('ttsSchedules') || '[]');
-                this.schedules = Array.isArray(saved) ? saved.map(schedule => ({
-                    ...schedule,
-                    items: Array.isArray(schedule.items) ? schedule.items.map(item => ({
-                        ...item,
-                        type: item.type === 'audio' || (!item.type && item.audioUrl) ? 'audio' : 'tts'
-                    })) : []
-                })) : [];
+                this.schedules = Array.isArray(saved) ? saved.map(schedule => {
+                    const items = Array.isArray(schedule.items)
+                        ? schedule.items
+                            .filter(item => item?.audioUrl || item?.type === 'audio')
+                            .map(item => ({
+                                ...item,
+                                type: 'audio',
+                                repeatCount: Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1))),
+                                repeatIntervalSeconds: item.repeatIntervalSeconds === undefined
+                                    ? 10
+                                    : Math.min(3600, Math.max(0, Math.round(Number(item.repeatIntervalSeconds) || 0)))
+                            }))
+                        : [];
+                    return {
+                        ...schedule,
+                        days: this.normalizeScheduleDays(schedule.days),
+                        enabled: items.length ? schedule.enabled !== false : false,
+                        itemIntervalSeconds: Math.min(3600, Math.max(0, Math.round(Number(schedule.itemIntervalSeconds) || 0))),
+                        items
+                    };
+                }).filter(schedule => schedule.items.length) : [];
             } catch (error) {
                 console.error('Failed to load schedules:', error);
                 this.schedules = [];
@@ -1474,25 +1520,16 @@ function ttsApp() {
             if (!schedule?.time) return null;
             const [hours, minutes] = schedule.time.split(':').map(Number);
             if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-            const start = new Date(now);
-            start.setHours(hours, minutes, 0, 0);
-            const interval = Math.max(1, Number(schedule.intervalMinutes) || 1440) * 60000;
-            if (now < start) return null;
-            const occurrence = Math.floor((now.getTime() - start.getTime()) / interval);
-            return new Date(start.getTime() + occurrence * interval);
-        },
-
-        formatScheduleInterval(minutes) {
-            const value = Number(minutes) || 0;
-            if (value % 1440 === 0) return value / 1440 === 1 ? 'setiap hari' : `setiap ${value / 1440} hari`;
-            if (value % 60 === 0) return `setiap ${value / 60} jam`;
-            return `setiap ${value} menit`;
+            const days = this.normalizeScheduleDays(schedule.days, false);
+            if (!days.includes(now.getDay()) || now.getHours() !== hours || now.getMinutes() !== minutes) return null;
+            const occurrence = new Date(now);
+            occurrence.setSeconds(0, 0);
+            return occurrence;
         },
 
         checkSchedules() {
             if (!this.schedules.length) return;
-            // Jangan menandai alarm sudah berjalan sebelum koneksi tersedia;
-            // setelah tersambung, occurrence yang sama akan diputar.
+            // Alarm hanya ditandai berjalan setelah koneksi tersedia.
             if (!this.socket || !this.socket.connected) return;
             const now = new Date();
             this.schedules.forEach(schedule => {
@@ -1539,26 +1576,29 @@ function ttsApp() {
 
         async runSchedule(schedule) {
             this.runningScheduleIds.push(schedule.id);
-            this.showNotification(`Scheduler “${schedule.name}” mulai (${schedule.items.length} item)`, 'info');
+            const totalPlays = this.getScheduleTotalPlays(schedule);
+            this.showNotification(`Scheduler “${schedule.name}” mulai (${totalPlays} kali putar)`, 'info');
             const schedulerRunId = `run_${schedule.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             try {
                 for (let index = 0; index < schedule.items.length; index += 1) {
                     const item = schedule.items[index];
-                    const schedulerItem = index + 1;
-                    const schedulerData = {
-                        priority: item.priority || 'normal',
-                        timestamp: new Date().toISOString(),
-                        schedulerId: schedule.id,
-                        schedulerName: schedule.name,
-                        schedulerItem,
-                        schedulerRunId
-                    };
-                    const playbackFinished = this.waitForScheduleItem(schedulerRunId, schedulerItem);
-                    if (item.type === 'audio') {
+                    const repeatCount = Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1)));
+                    const repeatIntervalMs = Math.min(3600, Math.max(0, Number(item.repeatIntervalSeconds) || 0)) * 1000;
+                    for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
+                        const schedulerItem = `${index + 1}.${repeat}`;
+                        const schedulerData = {
+                            priority: item.priority || 'normal',
+                            timestamp: new Date().toISOString(),
+                            schedulerId: schedule.id,
+                            schedulerName: schedule.name,
+                            schedulerItem,
+                            schedulerRunId
+                        };
                         if (!item.audioUrl) {
                             this.resolveScheduleItemWaiter({ ...schedulerData, status: 'skipped' });
-                            continue;
+                            break;
                         }
+                        const playbackFinished = this.waitForScheduleItem(schedulerRunId, schedulerItem);
                         this.socket.emit('audio-request', {
                             ...schedulerData,
                             audioUrl: item.audioUrl,
@@ -1567,20 +1607,11 @@ function ttsApp() {
                             duration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
                             format: item.audioFormat || 'audio/mpeg'
                         });
-                    } else {
-                        if (!item.text) {
-                            this.resolveScheduleItemWaiter({ ...schedulerData, status: 'skipped' });
-                            continue;
+                        await playbackFinished;
+                        if (repeat < repeatCount && repeatIntervalMs > 0) {
+                            await new Promise(resolve => setTimeout(resolve, repeatIntervalMs));
                         }
-                        this.socket.emit('tts-request', {
-                            ...schedulerData,
-                            text: item.text,
-                            language: item.language || 'id-ID',
-                            speed: Math.max(0.5, Math.min(Number(item.speed) || 1, 2))
-                        });
                     }
-
-                    await playbackFinished;
                     if (index < schedule.items.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000));
                     }

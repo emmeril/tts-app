@@ -951,15 +951,16 @@
                 </div>
 
                 <div x-show="!schedulerDraft" class="space-y-3">
-                    <div class="flex items-center justify-between">
-                        <p class="text-sm text-gray-600">Jadwal berjalan di halaman ini seperti alarm. Pastikan minimal satu Master aktif.</p>
-                        <button @click="createSchedule()" class="px-3 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm"><i class="fas fa-plus mr-1"></i>Tambah</button>
+                    <div class="flex items-start justify-between gap-3">
+                        <p class="text-sm text-gray-600">Alarm memutar file audio otomatis pada hari dan jam yang dipilih. Pastikan halaman ini terbuka dan minimal satu Master aktif.</p>
+                        <button @click="createSchedule()" class="shrink-0 px-3 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm"><i class="fas fa-plus mr-1"></i>Tambah</button>
                     </div>
                     <template x-for="schedule in schedules" :key="schedule.id">
                         <div class="p-3 border border-gray-200 rounded-xl flex items-start justify-between gap-3" :class="schedule.enabled ? 'bg-white' : 'bg-gray-50 opacity-70'">
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2"><span class="text-xl font-bold text-primary-700" x-text="schedule.time"></span><span class="font-medium truncate" x-text="schedule.name"></span></div>
-                                <p class="text-xs text-gray-500 mt-1"><span x-text="formatScheduleInterval(schedule.intervalMinutes)"></span> · <span x-text="schedule.items.length + ' item'"></span> · jeda <span x-text="schedule.itemIntervalSeconds + ' dtk'"></span></p>
+                                <p class="text-xs text-gray-600 mt-1"><i class="fas fa-calendar-day mr-1 text-primary-500"></i><span x-text="formatScheduleDays(schedule.days)"></span></p>
+                                <p class="text-xs text-gray-500 mt-1"><span x-text="schedule.items.length + ' file audio'"></span> · <span x-text="getScheduleTotalPlays(schedule) + ' kali putar'"></span></p>
                                 <p class="text-xs text-gray-500 mt-1 truncate" x-text="schedule.items.map(item => getScheduleItemLabel(item)).join(' • ')"></p>
                             </div>
                             <div class="flex items-center gap-1 shrink-0">
@@ -975,23 +976,29 @@
                 <template x-if="schedulerDraft">
                 <form @submit.prevent="saveSchedule()" class="space-y-4">
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label class="text-sm font-medium text-gray-700">Nama jadwal<input x-model="schedulerDraft.name" type="text" maxlength="80" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Contoh: Pengumuman pagi"></label>
-                        <label class="text-sm font-medium text-gray-700">Jam mulai (seperti alarm)<input x-model="schedulerDraft.time" type="time" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"></label>
-                        <div class="text-sm font-medium text-gray-700">Pengulangan alarm<select x-model="schedulerDraft.intervalMode" @change="updateDraftInterval()" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><option value="daily">Setiap hari</option><option value="hourly">Setiap jam</option><option value="custom">Interval lain</option></select><div x-show="schedulerDraft.intervalMode === 'custom'" class="mt-2 flex items-center gap-2"><input x-model.number="schedulerDraft.intervalMinutes" type="number" min="1" step="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 whitespace-nowrap">menit</span></div><span class="text-xs text-gray-500 font-normal">Mulai berbunyi pada jam yang dipilih.</span></div>
-                        <label class="text-sm font-medium text-gray-700">Jeda setelah audio selesai<input x-model.number="schedulerDraft.itemIntervalSeconds" type="number" min="0" step="1" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Jeda dihitung setelah item sebelumnya selesai diputar (detik).</span></label>
+                        <label class="text-sm font-medium text-gray-700">Nama jadwal<input x-model="schedulerDraft.name" type="text" maxlength="80" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Contoh: Alarm buka toko"></label>
+                        <label class="text-sm font-medium text-gray-700">Jam alarm<input x-model="schedulerDraft.time" type="time" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Mengikuti waktu pada perangkat ini.</span></label>
                     </div>
+                    <fieldset>
+                        <legend class="text-sm font-medium text-gray-700 mb-2">Hari aktif</legend>
+                        <div class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                            <template x-for="day in scheduleDayOptions" :key="day.value">
+                                <label class="cursor-pointer">
+                                    <input type="checkbox" class="sr-only" :checked="isDraftDaySelected(day.value)" @change="toggleDraftDay(day.value)">
+                                    <span class="h-10 flex items-center justify-center border rounded-lg text-xs sm:text-sm font-medium transition-colors" :class="isDraftDaySelected(day.value) ? 'bg-primary-500 border-primary-500 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-primary-300'" x-text="day.shortLabel"></span>
+                                </label>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2" x-text="formatScheduleDays(schedulerDraft.days)"></p>
+                    </fieldset>
                     <label class="flex items-center gap-2 text-sm text-gray-700"><input x-model="schedulerDraft.enabled" type="checkbox" class="w-4 h-4 text-primary-600 rounded"> Aktifkan jadwal ini</label>
                     <div class="border-t border-gray-200 pt-3">
-                        <div class="flex items-center justify-between mb-2"><div><h3 class="font-medium text-gray-900">Item yang diputar</h3><p class="text-xs text-gray-500">Pilih teks TTS atau upload file audio dari perangkat.</p></div><button type="button" @click="addScheduleItem()" class="px-2 py-1 text-sm text-primary-700 hover:bg-primary-50 rounded"><i class="fas fa-plus mr-1"></i>Tambah item</button></div>
-                        <div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+                        <div class="flex items-center justify-between gap-3 mb-2"><div><h3 class="font-medium text-gray-900">File audio</h3><p class="text-xs text-gray-500">Atur jumlah putar dan jeda untuk setiap audio.</p></div><button type="button" @click="addScheduleItem()" class="shrink-0 px-2 py-1 text-sm text-primary-700 hover:bg-primary-50 rounded"><i class="fas fa-plus mr-1"></i>Tambah audio</button></div>
+                        <div class="space-y-3 max-h-96 overflow-y-auto pr-1">
                             <template x-for="(item, index) in schedulerDraft.items" :key="index">
                                 <div class="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                    <div class="flex items-center gap-2 mb-2"><span class="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center" x-text="index + 1"></span><select x-model="item.type" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm"><option value="tts">Teks TTS</option><option value="audio">Upload audio</option></select><button type="button" @click="removeScheduleItem(index)" :disabled="schedulerDraft.items.length <= 1" class="p-2 text-red-500 disabled:text-gray-300"><i class="fas fa-trash"></i></button></div>
-                                    <div x-show="item.type !== 'audio'">
-                                        <textarea x-model="item.text" rows="2" maxlength="5000" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" :placeholder="`Teks custom ${index + 1}`"></textarea>
-                                        <div class="grid grid-cols-2 gap-2 mt-2"><select x-model="item.language" class="px-2 py-1.5 border border-gray-300 rounded text-xs"><template x-for="lang in languages" :key="lang.code"><option :value="lang.code" x-text="lang.name"></option></template></select><input x-model.number="item.speed" type="number" min="0.5" max="2" step="0.1" class="px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Kecepatan"></div>
-                                    </div>
-                                    <div x-show="item.type === 'audio'" class="space-y-2">
+                                    <div class="flex items-center gap-2 mb-2"><span class="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center" x-text="index + 1"></span><span class="flex-1 text-sm font-medium text-gray-700">Audio</span><button type="button" @click="removeScheduleItem(index)" :disabled="schedulerDraft.items.length <= 1" class="p-2 text-red-500 disabled:text-gray-300" title="Hapus audio"><i class="fas fa-trash"></i></button></div>
+                                    <div class="space-y-2">
                                         <label class="block p-3 border-2 border-dashed border-gray-300 hover:border-primary-400 rounded-lg bg-white cursor-pointer text-center text-sm text-gray-600">
                                             <input type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/webm,audio/mp4,audio/aac,audio/flac,.mp3,.wav,.ogg,.webm,.m4a,.aac,.flac" @change="uploadScheduleAudio($event, item)" class="hidden">
                                             <i class="fas" :class="item.uploading ? 'fa-spinner fa-spin text-primary-500' : 'fa-upload text-primary-500'"></i>
@@ -1002,11 +1009,16 @@
                                             <div class="flex items-center justify-between gap-2 text-xs"><span class="font-medium text-green-800 truncate"><i class="fas fa-file-audio mr-1"></i><span x-text="item.audioName"></span></span><span class="text-green-700 shrink-0" x-text="formatFileSize(item.audioSize)"></span></div>
                                             <audio controls preload="metadata" :src="item.audioUrl" class="w-full h-9 mt-2"></audio>
                                         </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="text-xs font-medium text-gray-700">Jumlah putar<input x-model.number="item.repeatCount" type="number" min="1" max="100" step="1" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><span class="font-normal text-gray-500">Minimal 1 kali</span></label>
+                                            <label class="text-xs font-medium text-gray-700">Jeda pengulangan<input x-model.number="item.repeatIntervalSeconds" type="number" min="0" max="3600" step="1" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><span class="font-normal text-gray-500">Detik setelah audio selesai</span></label>
+                                        </div>
                                         <p x-show="item.uploadError" class="text-xs text-red-600" x-text="item.uploadError"></p>
                                     </div>
                                 </div>
                             </template>
                         </div>
+                        <label x-show="schedulerDraft.items.length > 1" class="block mt-3 text-sm font-medium text-gray-700">Jeda antar file audio<input x-model.number="schedulerDraft.itemIntervalSeconds" type="number" min="0" max="3600" step="1" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"><span class="text-xs text-gray-500 font-normal">Detik setelah seluruh pengulangan file sebelumnya selesai.</span></label>
                     </div>
                     <div class="flex justify-end gap-2 pt-3 border-t border-gray-200"><button type="button" @click="schedulerDraft = null" class="px-3 py-2 border border-gray-300 rounded-lg text-sm">Batal</button><button type="submit" class="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm"><i class="fas fa-save mr-1"></i>Simpan Scheduler</button></div>
                 </form>
