@@ -55,6 +55,22 @@ function ttsApp() {
             { value: 6, label: 'Sabtu', shortLabel: 'Sab' },
             { value: 0, label: 'Minggu', shortLabel: 'Min' }
         ],
+
+        // Voice note recorder
+        voiceRecorder: null,
+        voiceStream: null,
+        voiceChunks: [],
+        voiceNoteBlob: null,
+        voiceNoteUrl: '',
+        voiceNoteDuration: 0,
+        voiceNoteMimeType: '',
+        voiceRecordingStartedAt: 0,
+        voiceRecordingSeconds: 0,
+        voiceRecordingTimer: null,
+        voiceDiscardOnStop: false,
+        isRecordingVoice: false,
+        isSendingVoice: false,
+        maxVoiceNoteSeconds: 300,
         
         // UI Controls
         charCount: 0,
@@ -130,6 +146,8 @@ function ttsApp() {
                 this.saveMasterPreference();
                 this.saveClientId();
                 this.stopScheduler();
+                this.releaseVoiceRecorder();
+                this.revokeVoiceNoteUrl();
             });
             
             // Initialize socket connection
@@ -565,7 +583,8 @@ function ttsApp() {
                     }
                     
                     // Tampilkan notifikasi
-                    this.showNotification(`Menerima audio dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
+                    const incomingLabel = data.sourceType === 'voice-note' ? 'Voice note' : 'Audio';
+                    this.showNotification(`Menerima ${incomingLabel} dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
                     
                     // Tunggu sebentar untuk memastikan audio URL tersedia di DOM
                     setTimeout(() => {
@@ -573,10 +592,8 @@ function ttsApp() {
                     }, 300);
                 } else {
                     // Client biasa hanya menampilkan notifikasi
-                    this.showNotification(
-                        `Teks telah dikirim ke ${data.masterCount || 1} Master`,
-                        'info'
-                    );
+                    const sentLabel = data.sourceType === 'voice-note' ? 'Voice note' : 'Teks';
+                    this.showNotification(`${sentLabel} telah dikirim ke ${data.masterCount || 1} Master`, 'info');
                 }
             });
             
@@ -651,14 +668,23 @@ function ttsApp() {
                     this.showNotification(`Audio item ${data.schedulerItem || ''} scheduler “${data.schedulerName || ''}” terkirim`, 'success');
                     return;
                 }
+                if (this.isSendingVoice) {
+                    this.isSendingVoice = false;
+                    this.clearVoiceNote();
+                }
                 this.showNotification(data.message || 'Audio upload berhasil dikirim', 'success');
             });
 
             this.socket.on('audio-queued', (data) => {
+                if (this.isSendingVoice) {
+                    this.isSendingVoice = false;
+                    this.clearVoiceNote();
+                }
                 this.showNotification(data.message || 'Audio upload masuk antrian', 'info');
             });
 
             this.socket.on('audio-error', (data) => {
+                this.isSendingVoice = false;
                 this.resolveScheduleItemWaiter({ ...data, status: 'error' });
                 const itemLabel = data.schedulerItem ? `Item ${data.schedulerItem} scheduler: ` : '';
                 this.showNotification(`${itemLabel}${this.getEventErrorMessage(data, 'Audio upload gagal diproses')}`, 'error');
@@ -721,6 +747,7 @@ function ttsApp() {
             this.socket.on('disconnect', (reason) => {
                 this.serverStatus = 'disconnected';
                 this.serverStatusText = 'Terputus dari server';
+                this.isSendingVoice = false;
                 
                 // Set reconnection flag
                 localStorage.setItem('ttsReconnecting', 'true');
@@ -933,6 +960,249 @@ function ttsApp() {
                 this.isLoading = false;
                 this.showNotification(`Gagal mengirim: ${error.message}`, 'error');
                 console.error('TTS Error:', error);
+            }
+        },
+
+        getSupportedVoiceMimeType() {
+            if (typeof MediaRecorder === 'undefined') return '';
+            if (typeof MediaRecorder.isTypeSupported !== 'function') return '';
+
+            const candidates = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+                'audio/ogg;codecs=opus'
+            ];
+
+            return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+        },
+
+        async startVoiceRecording() {
+            if (this.isRecordingVoice || this.isSendingVoice) return;
+
+            if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+                this.showNotification('Perekam langsung membutuhkan HTTPS atau localhost. Gunakan opsi rekam dari perangkat.', 'error');
+                return;
+            }
+
+            try {
+                this.clearVoiceNote();
+                const mimeType = this.getSupportedVoiceMimeType();
+                this.voiceStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                this.voiceChunks = [];
+                this.voiceDiscardOnStop = false;
+                this.voiceRecordingSeconds = 0;
+                this.voiceRecordingStartedAt = Date.now();
+                this.voiceNoteMimeType = mimeType;
+                this.voiceRecorder = mimeType
+                    ? new MediaRecorder(this.voiceStream, { mimeType })
+                    : new MediaRecorder(this.voiceStream);
+
+                this.voiceRecorder.ondataavailable = event => {
+                    if (event.data?.size > 0) this.voiceChunks.push(event.data);
+                };
+
+                this.voiceRecorder.onerror = event => {
+                    console.error('Voice recorder error:', event.error || event);
+                    this.showNotification('Perekaman suara gagal. Coba izinkan akses mikrofon lagi.', 'error');
+                    this.cancelVoiceRecording();
+                };
+
+                this.voiceRecorder.onstop = () => this.finishVoiceRecording();
+                this.voiceRecorder.start(1000);
+                this.isRecordingVoice = true;
+                this.voiceRecordingTimer = setInterval(() => {
+                    this.voiceRecordingSeconds = Math.min(
+                        this.maxVoiceNoteSeconds,
+                        Math.floor((Date.now() - this.voiceRecordingStartedAt) / 1000)
+                    );
+
+                    if (this.voiceRecordingSeconds >= this.maxVoiceNoteSeconds) {
+                        this.stopVoiceRecording();
+                        this.showNotification('Batas voice note 5 menit tercapai.', 'info');
+                    }
+                }, 250);
+            } catch (error) {
+                this.releaseVoiceRecorder();
+                const denied = error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
+                this.showNotification(
+                    denied ? 'Akses mikrofon ditolak. Izinkan mikrofon dari pengaturan browser.' : `Mikrofon tidak dapat digunakan: ${error.message}`,
+                    'error'
+                );
+            }
+        },
+
+        stopVoiceRecording() {
+            if (!this.voiceRecorder || this.voiceRecorder.state === 'inactive') return;
+            this.voiceRecorder.stop();
+        },
+
+        cancelVoiceRecording() {
+            this.voiceDiscardOnStop = true;
+            if (this.voiceRecorder && this.voiceRecorder.state !== 'inactive') {
+                this.voiceRecorder.stop();
+                return;
+            }
+            this.releaseVoiceRecorder();
+            this.clearVoiceNote();
+        },
+
+        finishVoiceRecording() {
+            const discard = this.voiceDiscardOnStop;
+            const chunks = this.voiceChunks.slice();
+            const mimeType = this.voiceRecorder?.mimeType || this.voiceNoteMimeType || chunks[0]?.type || 'audio/webm';
+            const elapsed = Math.max(1, Math.round((Date.now() - this.voiceRecordingStartedAt) / 100) / 10);
+
+            this.releaseVoiceRecorder();
+            this.voiceChunks = [];
+            this.voiceDiscardOnStop = false;
+            if (discard) return;
+
+            const blob = new Blob(chunks, { type: mimeType });
+            const maxBytes = this.maxScheduleAudioSizeMb * 1024 * 1024;
+            if (!blob.size) {
+                this.showNotification('Voice note kosong. Silakan rekam ulang.', 'error');
+                return;
+            }
+            if (blob.size > maxBytes) {
+                this.showNotification(`Voice note terlalu besar. Maksimal ${this.maxScheduleAudioSizeMb} MB.`, 'error');
+                return;
+            }
+
+            this.voiceNoteBlob = blob;
+            this.voiceNoteMimeType = mimeType;
+            this.voiceNoteDuration = Math.min(this.maxVoiceNoteSeconds, elapsed);
+            this.voiceRecordingSeconds = Math.round(this.voiceNoteDuration);
+            this.voiceNoteUrl = URL.createObjectURL(blob);
+        },
+
+        releaseVoiceRecorder() {
+            if (this.voiceRecordingTimer) {
+                clearInterval(this.voiceRecordingTimer);
+                this.voiceRecordingTimer = null;
+            }
+            if (this.voiceStream) {
+                this.voiceStream.getTracks().forEach(track => track.stop());
+            }
+            this.voiceStream = null;
+            this.voiceRecorder = null;
+            this.isRecordingVoice = false;
+        },
+
+        revokeVoiceNoteUrl() {
+            if (this.voiceNoteUrl) URL.revokeObjectURL(this.voiceNoteUrl);
+            this.voiceNoteUrl = '';
+        },
+
+        clearVoiceNote() {
+            if (this.isRecordingVoice) {
+                this.cancelVoiceRecording();
+                return;
+            }
+            this.revokeVoiceNoteUrl();
+            this.voiceNoteBlob = null;
+            this.voiceNoteDuration = 0;
+            this.voiceNoteMimeType = '';
+            this.voiceRecordingSeconds = 0;
+        },
+
+        formatVoiceDuration(seconds) {
+            const total = Math.max(0, Math.floor(Number(seconds) || 0));
+            return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        },
+
+        getVoiceFileExtension(format) {
+            return {
+                'audio/webm': 'webm',
+                'audio/mp4': 'm4a',
+                'audio/ogg': 'ogg',
+                'audio/mpeg': 'mp3',
+                'audio/wav': 'wav'
+            }[String(format || '').split(';')[0].toLowerCase()] || 'webm';
+        },
+
+        async selectVoiceNoteFile(event) {
+            const input = event?.target;
+            const file = input?.files?.[0];
+            if (!file || this.isRecordingVoice || this.isSendingVoice) return;
+
+            const format = this.getScheduleAudioType(file);
+            const maxBytes = this.maxScheduleAudioSizeMb * 1024 * 1024;
+            if (!format) {
+                input.value = '';
+                this.showNotification('Format rekaman tidak didukung. Gunakan WebM, M4A, MP3, WAV, atau OGG.', 'error');
+                return;
+            }
+            if (file.size > maxBytes) {
+                input.value = '';
+                this.showNotification(`Voice note terlalu besar. Maksimal ${this.maxScheduleAudioSizeMb} MB.`, 'error');
+                return;
+            }
+
+            this.clearVoiceNote();
+            this.voiceNoteBlob = file;
+            this.voiceNoteMimeType = format;
+            this.voiceNoteDuration = await this.getLocalAudioDuration(file) || 1;
+            this.voiceRecordingSeconds = Math.round(this.voiceNoteDuration);
+            this.voiceNoteUrl = URL.createObjectURL(file);
+            input.value = '';
+        },
+
+        async sendVoiceNote() {
+            if (!this.voiceNoteBlob || this.isRecordingVoice || this.isSendingVoice) return;
+            if (!this.socket?.connected) {
+                this.showNotification('Tidak terhubung ke server. Coba sambungkan ulang.', 'error');
+                return;
+            }
+
+            const format = this.getScheduleAudioType({
+                type: this.voiceNoteBlob.type || this.voiceNoteMimeType,
+                name: `voice-note.${this.getVoiceFileExtension(this.voiceNoteMimeType)}`
+            });
+            if (!format) {
+                this.showNotification('Format voice note tidak didukung server.', 'error');
+                return;
+            }
+
+            this.isSendingVoice = true;
+            try {
+                const now = new Date();
+                const extension = this.getVoiceFileExtension(format);
+                const fileName = `voice-note-${now.toISOString().replace(/[:.]/g, '-')}.${extension}`;
+                const response = await fetch('/api/audio/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': format,
+                        'X-Audio-Name': encodeURIComponent(fileName)
+                    },
+                    body: this.voiceNoteBlob
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.success === false) {
+                    throw new Error(data.error || data.message || `Upload gagal (${response.status})`);
+                }
+
+                this.socket.emit('audio-request', {
+                    audioUrl: data.audioUrl,
+                    fileName: `Voice note ${now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`,
+                    audioSize: data.size || this.voiceNoteBlob.size,
+                    duration: this.voiceNoteDuration,
+                    format: data.format || format,
+                    sourceType: 'voice-note',
+                    priority: this.priority,
+                    timestamp: now.toISOString()
+                });
+                this.showNotification('Mengirim voice note ke semua Master...', 'info');
+            } catch (error) {
+                this.isSendingVoice = false;
+                this.showNotification(`Gagal mengirim voice note: ${error.message}`, 'error');
             }
         },
         
@@ -1328,7 +1598,8 @@ function ttsApp() {
                 'audio/flac': 'audio/flac',
                 'audio/x-flac': 'audio/flac'
             };
-            if (supportedTypes[file?.type]) return supportedTypes[file.type];
+            const baseMimeType = String(file?.type || '').split(';')[0].trim().toLowerCase();
+            if (supportedTypes[baseMimeType]) return supportedTypes[baseMimeType];
 
             const extension = String(file?.name || '').split('.').pop().toLowerCase();
             return {

@@ -122,6 +122,16 @@
         .gradient-bg {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
+
+        @keyframes voiceBar {
+            0%, 100% { transform: scaleY(0.35); opacity: 0.55; }
+            50% { transform: scaleY(1); opacity: 1; }
+        }
+
+        .voice-bar {
+            animation: voiceBar 0.85s ease-in-out infinite;
+            transform-origin: center;
+        }
         
         /* Responsive adjustments */
         @media (max-width: 640px) {
@@ -430,7 +440,7 @@
                                 <span class="px-2 sm:px-3 py-1 bg-gray-100 rounded-full text-xs sm:text-sm font-medium" 
                                       x-text="currentAudio?.duration != null ? currentAudio.duration + 's' : 'Audio upload'"></span>
                                 <span class="px-2 sm:px-3 py-1 bg-primary-50 text-primary-700 rounded-full text-xs sm:text-sm font-medium"
-                                      x-text="currentAudio?.sourceType === 'upload' ? (currentAudio.fileName || 'File audio') : getLanguageName(currentAudio?.language)"></span>
+                                      x-text="currentAudio?.sourceType === 'voice-note' ? (currentAudio.fileName || 'Voice note') : (currentAudio?.sourceType === 'upload' ? (currentAudio.fileName || 'File audio') : getLanguageName(currentAudio?.language))"></span>
                             </div>
                         </div>
                         
@@ -544,6 +554,102 @@
                                         <i class="fas fa-info-circle mr-1"></i>
                                         Teks akan dikirim ke semua Master Controller yang aktif
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Voice Note Card -->
+                    <div class="bg-white rounded-xl sm:rounded-2xl shadow-soft border border-gray-200 overflow-hidden">
+                        <div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 bg-gradient-to-r from-orange-50 via-white to-white">
+                            <div class="flex items-center justify-between gap-3">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center">
+                                        <i class="fas fa-microphone"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-base sm:text-lg font-display font-bold text-gray-900">Voice Note</h3>
+                                        <p class="text-xs text-gray-500">Rekam pesan suara dan kirim ke semua Master</p>
+                                    </div>
+                                </div>
+                                <span class="shrink-0 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-xs font-medium">Maks. 5 menit</span>
+                            </div>
+                        </div>
+
+                        <div class="p-4 sm:p-6">
+                            <div x-show="!isRecordingVoice && !voiceNoteBlob" class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div>
+                                    <p class="text-sm font-medium text-gray-800">Siap merekam dari mikrofon perangkat ini</p>
+                                    <p class="text-xs text-gray-500 mt-1">Browser akan meminta izin mikrofon saat pertama digunakan.</p>
+                                </div>
+                                <div class="w-full sm:w-auto grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button @click="startVoiceRecording()"
+                                            :disabled="isSendingVoice"
+                                            class="px-5 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-medium shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                                        <i class="fas fa-microphone"></i>
+                                        <span>Mulai Rekam</span>
+                                    </button>
+                                    <label class="px-4 py-3 border border-orange-200 bg-orange-50 text-orange-700 rounded-xl font-medium hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 cursor-pointer">
+                                        <input type="file" accept="audio/*" capture @change="selectVoiceNoteFile($event)" :disabled="isSendingVoice" class="hidden">
+                                        <i class="fas fa-mobile-alt"></i>
+                                        <span>Rekam via Perangkat</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div x-show="isRecordingVoice" class="rounded-2xl border border-red-200 bg-red-50 p-4 sm:p-5">
+                                <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+                                    <div class="flex-1 flex items-center gap-4">
+                                        <div class="relative w-12 h-12 shrink-0 rounded-full bg-red-500 text-white flex items-center justify-center shadow-md">
+                                            <span class="absolute inset-0 rounded-full bg-red-400 animate-ping opacity-30"></span>
+                                            <i class="fas fa-microphone relative"></i>
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex items-center justify-between gap-3">
+                                                <p class="font-semibold text-red-800">Sedang merekam...</p>
+                                                <span class="font-mono text-lg font-bold text-red-700" x-text="formatVoiceDuration(voiceRecordingSeconds)"></span>
+                                            </div>
+                                            <div class="h-8 mt-2 flex items-center gap-1 overflow-hidden" aria-hidden="true">
+                                                <template x-for="bar in 22" :key="bar">
+                                                    <span class="voice-bar w-1 rounded-full bg-red-400" :style="`height: ${9 + ((bar * 13) % 22)}px; animation-delay: -${bar * 0.06}s`"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button @click="cancelVoiceRecording()" class="flex-1 sm:flex-none px-4 py-2.5 border border-red-200 bg-white text-red-700 rounded-lg hover:bg-red-100 transition-colors">
+                                            Batal
+                                        </button>
+                                        <button @click="stopVoiceRecording()" class="flex-1 sm:flex-none px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors">
+                                            <i class="fas fa-stop mr-2"></i>Selesai
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div x-show="!isRecordingVoice && voiceNoteBlob" class="space-y-4">
+                                <div class="rounded-xl border border-orange-200 bg-orange-50 p-3 sm:p-4">
+                                    <div class="flex items-center justify-between gap-3 mb-3">
+                                        <div class="flex items-center gap-2 min-w-0">
+                                            <span class="w-9 h-9 shrink-0 rounded-lg bg-orange-500 text-white flex items-center justify-center"><i class="fas fa-wave-square"></i></span>
+                                            <div class="min-w-0">
+                                                <p class="text-sm font-semibold text-gray-900">Voice note siap dikirim</p>
+                                                <p class="text-xs text-gray-500"><span x-text="formatVoiceDuration(voiceNoteDuration)"></span> · <span x-text="formatFileSize(voiceNoteBlob?.size)"></span></p>
+                                            </div>
+                                        </div>
+                                        <button @click="clearVoiceNote()" :disabled="isSendingVoice" class="p-2 text-gray-400 hover:text-red-500 disabled:opacity-50" title="Hapus rekaman"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                    <audio :src="voiceNoteUrl" controls playsinline class="w-full h-10"></audio>
+                                </div>
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button @click="startVoiceRecording()" :disabled="isSendingVoice" class="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                                        <i class="fas fa-redo mr-2"></i>Rekam Ulang
+                                    </button>
+                                    <button @click="sendVoiceNote()" :disabled="isSendingVoice || !socket || !socket.connected" class="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                        <i class="fas mr-2" :class="isSendingVoice ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                                        <span x-text="isSendingVoice ? 'Mengirim...' : 'Kirim Voice Note'"></span>
+                                    </button>
                                 </div>
                             </div>
                         </div>

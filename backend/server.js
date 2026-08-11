@@ -313,8 +313,8 @@ const emitUploadedAudioToMasters = (request) => {
       ? Number(request.duration)
       : null,
     format: request.format || 'audio/mpeg',
-    sourceType: 'upload',
-    fileName: String(request.fileName || 'Audio upload').slice(0, 160),
+    sourceType: request.sourceType === 'voice-note' ? 'voice-note' : 'upload',
+    fileName: String(request.fileName || (request.sourceType === 'voice-note' ? 'Voice note' : 'Audio upload')).slice(0, 160),
     audioSize: Number(request.audioSize) || null
   }, request);
 };
@@ -335,8 +335,9 @@ const processQueuedMasterRequests = async () => {
         if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
           io.to(request.fromClientSocketId).emit('audio-complete', {
             success: true,
-            message: `Audio upload antrian telah dikirim ke ${masterClients.size} Master Controller`,
+            message: `${request.sourceType === 'voice-note' ? 'Voice note' : 'Audio upload'} antrian telah dikirim ke ${masterClients.size} Master Controller`,
             masterCount: masterClients.size,
+            sourceType: request.sourceType === 'voice-note' ? 'voice-note' : 'upload',
             queued: true,
             schedulerId: request.schedulerId || null,
             schedulerName: request.schedulerName || null,
@@ -376,7 +377,9 @@ const processQueuedMasterRequests = async () => {
       if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
         const isUploadedAudio = request.kind === 'audio';
         const errorEvent = isUploadedAudio ? 'audio-error' : 'tts-error';
-        const requestLabel = isUploadedAudio ? 'audio upload' : 'TTS';
+        const requestLabel = isUploadedAudio
+          ? (request.sourceType === 'voice-note' ? 'voice note' : 'audio upload')
+          : 'TTS';
         emitSocketError(io.to(request.fromClientSocketId), errorEvent, `Gagal memproses antrian ${requestLabel} (Detail: ${error.message})`, {
           queued: true,
           ...getSchedulerContext(request)
@@ -848,9 +851,13 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const sourceType = data.sourceType === 'voice-note' ? 'voice-note' : 'upload';
+      const sourceLabel = sourceType === 'voice-note' ? 'Voice note' : 'Audio upload';
+
       const uploadedAudio = getUploadedAudio(data.audioUrl);
       if (!uploadedAudio) {
         emitSocketError(socket, 'audio-error', 'File audio upload tidak ditemukan atau URL tidak valid', {
+          sourceType,
           schedulerId: data.schedulerId || null,
           schedulerName: data.schedulerName || null,
           schedulerItem: data.schedulerItem || null,
@@ -866,7 +873,8 @@ io.on('connection', (socket) => {
         fromClientId: client.id,
         fromClientSocketId: socket.id,
         timestamp: new Date().toISOString(),
-        priority: data.priority || 'normal'
+        priority: data.priority || 'normal',
+        sourceType
       };
 
       if (masterClients.size === 0) {
@@ -876,6 +884,7 @@ io.on('connection', (socket) => {
         if (masterRequestQueue.length >= MAX_QUEUE_LENGTH || queuedForClient >= maxQueuedPerClient) {
           emitSocketError(socket, 'audio-error', 'Antrian audio penuh. Coba lagi setelah Master aktif.', {
             queueFull: true,
+            sourceType,
             ...getSchedulerContext(data)
           });
           return;
@@ -884,8 +893,9 @@ io.on('connection', (socket) => {
         masterRequestQueue.push(request);
         socket.emit('audio-queued', {
           success: true,
-          message: 'Audio upload masuk antrian. Menunggu Master Controller...',
+          message: `${sourceLabel} masuk antrian. Menunggu Master Controller...`,
           queuePosition: masterRequestQueue.length,
+          sourceType,
           schedulerId: data.schedulerId || null,
           schedulerName: data.schedulerName || null,
           schedulerItem: data.schedulerItem || null,
@@ -901,8 +911,9 @@ io.on('connection', (socket) => {
       emitUploadedAudioToMasters(request);
       socket.emit('audio-complete', {
         success: true,
-        message: `Audio upload telah dikirim ke ${masterClients.size} Master Controller`,
+        message: `${sourceLabel} telah dikirim ke ${masterClients.size} Master Controller`,
         masterCount: masterClients.size,
+        sourceType,
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
         schedulerItem: data.schedulerItem || null,
@@ -910,7 +921,8 @@ io.on('connection', (socket) => {
       });
     } catch (error) {
       logError(`Uploaded audio error for ${client?.id || socket.id}`, error.message);
-      emitSocketError(socket, 'audio-error', `Gagal mengirim audio upload (Detail: ${error.message})`, {
+      emitSocketError(socket, 'audio-error', `Gagal mengirim audio (Detail: ${error.message})`, {
+        sourceType: data.sourceType === 'voice-note' ? 'voice-note' : 'upload',
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
         schedulerItem: data.schedulerItem || null,
