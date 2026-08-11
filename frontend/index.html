@@ -646,7 +646,7 @@
                                     <button @click="startVoiceRecording()" :disabled="isSendingVoice" class="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">
                                         <i class="fas fa-redo mr-2"></i>Rekam Ulang
                                     </button>
-                                    <button @click="sendVoiceNote()" :disabled="isSendingVoice || !socket || !socket.connected" class="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                    <button @click="sendVoiceNote()" :disabled="isSendingVoice" class="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                                         <i class="fas mr-2" :class="isSendingVoice ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
                                         <span x-text="isSendingVoice ? 'Mengirim...' : 'Kirim Voice Note'"></span>
                                     </button>
