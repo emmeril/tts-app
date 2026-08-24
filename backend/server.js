@@ -246,6 +246,7 @@ const trackSchedulerPlayback = (requestId, result, request) => {
   );
   const pending = {
     fromClientSocketId: request.fromClientSocketId,
+    masterSocketIds: new Set(masterClients),
     ...getSchedulerContext(request),
     timeout: null
   };
@@ -965,7 +966,7 @@ io.on('connection', (socket) => {
     if (
       masterClients.has(socket.id)
       && requestId
-      && ['ended', 'stopped', 'interrupted'].includes(playbackStatus)
+      && ['ended', 'stopped', 'interrupted', 'error', 'master-disconnected'].includes(playbackStatus)
     ) {
       completeSchedulerPlayback(requestId, playbackStatus, socket.id);
     }
@@ -1018,6 +1019,15 @@ io.on('connection', (socket) => {
     if (masterClients.has(socket.id)) {
       const wasMaster = true;
       masterClients.delete(socket.id);
+
+      // Finish scheduler items that no longer have any master able to play them.
+      pendingSchedulerPlaybacks.forEach((pending, requestId) => {
+        if (!pending.masterSocketIds) return;
+        pending.masterSocketIds.delete(socket.id);
+        if (pending.masterSocketIds.size === 0) {
+          completeSchedulerPlayback(requestId, 'master-disconnected', socket.id);
+        }
+      });
       
       io.emit('master-disconnected', {
         disconnectedMasterId: client?.id,

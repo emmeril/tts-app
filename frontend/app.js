@@ -45,6 +45,7 @@ function ttsApp() {
         schedulerTimer: null,
         runningScheduleIds: [],
         schedulerItemWaiters: {},
+        schedulerRunStates: {},
         maxScheduleAudioSizeMb: 20,
         scheduleDayOptions: [
             { value: 1, label: 'Senin', shortLabel: 'Sen' },
@@ -159,6 +160,7 @@ function ttsApp() {
             if (!audioElement) return;
 
             audioElement.autoplay = true;
+            audioElement.loop = false;
             audioElement.playsInline = true;
             audioElement.preload = 'auto';
 
@@ -587,8 +589,12 @@ function ttsApp() {
                     this.showNotification(`Menerima ${incomingLabel} dari ${data.fromClientId?.substring(0, 8) || 'unknown'}`, 'info');
                     
                     // Tunggu sebentar untuk memastikan audio URL tersedia di DOM
+                    const requestId = data.requestId || null;
                     setTimeout(() => {
-                        this.playAudio();
+                        // Ignore a delayed callback if a newer request replaced this audio.
+                        if (!this.socket?.connected) return;
+                        if (this.currentAudio !== data && this.currentAudio?.requestId !== requestId) return;
+                        this.playAudio(0, requestId || null);
                     }, 300);
                 } else {
                     // Client biasa hanya menampilkan notifikasi
@@ -692,8 +698,9 @@ function ttsApp() {
 
             this.socket.on('scheduler-item-finished', (data) => {
                 this.resolveScheduleItemWaiter(data);
-                if (data.status === 'timeout') {
-                    this.showNotification(`Timeout menunggu audio item ${data.schedulerItem || ''} selesai; scheduler dilanjutkan`, 'warning');
+                if (data.status && data.status !== 'ended') {
+                    this.showNotification(`Pemutaran audio item ${data.schedulerItem || ''} berhenti (${data.status}); scheduler dibatalkan`, 'warning');
+                    this.cancelSchedulerRun(data.schedulerRunId, data.status);
                 }
             });
 
@@ -748,6 +755,12 @@ function ttsApp() {
                 this.serverStatus = 'disconnected';
                 this.serverStatusText = 'Terputus dari server';
                 this.isSendingVoice = false;
+                this.cancelSchedulerRuns(`connection-${reason || 'lost'}`);
+
+                if (this.isMaster) {
+                    this.stopAudio(false);
+                    this.pendingAutoplayAudio = false;
+                }
                 
                 // Set reconnection flag
                 localStorage.setItem('ttsReconnecting', 'true');
@@ -1207,7 +1220,8 @@ function ttsApp() {
         },
         
         // Play audio
-        playAudio(retryCount = 0) {
+        playAudio(retryCount = 0, expectedRequestId = null) {
+            if (expectedRequestId && this.currentAudio?.requestId !== expectedRequestId) return;
             if (retryCount >= this.maxPlayRetries) {
                 console.error('Max retry attempts reached');
                 this.showNotification('Gagal memutar audio setelah beberapa percobaan', 'error');
@@ -1226,26 +1240,43 @@ function ttsApp() {
                 return;
             }
 
-            this.pendingAutoplayAudio = false;
-            audioElement.pause();
-            audioElement.currentTime = 0;
             audioElement.onplay = null;
             audioElement.onpause = null;
             audioElement.onended = null;
+            audioElement.onerror = null;
+            this.pendingAutoplayAudio = false;
+            audioElement.pause();
+            audioElement.currentTime = 0;
             
             audioElement.src = this.currentAudio.audioUrl;
+            audioElement.loop = false;
             audioElement.load();
+
+            const playbackAudio = this.currentAudio;
+            const playbackRequestId = playbackAudio?.requestId || null;
+            const isCurrentPlayback = () => (
+                this.currentAudio === playbackAudio
+                || (playbackRequestId && this.currentAudio?.requestId === playbackRequestId)
+            );
             
             audioElement.onplay = () => {
+                if (!isCurrentPlayback()) return;
                 this.onAudioPlay();
             };
             
             audioElement.onpause = () => {
+                if (!isCurrentPlayback()) return;
                 this.onAudioPause();
             };
             
             audioElement.onended = () => {
+                if (!isCurrentPlayback()) return;
                 this.onAudioEnd();
+            };
+
+            audioElement.onerror = () => {
+                if (!isCurrentPlayback()) return;
+                this.onAudioError();
             };
             
             const playPromise = audioElement.play();
@@ -1268,7 +1299,8 @@ function ttsApp() {
                     } else if (error.name === 'AbortError' || error.name === 'NetworkError') {
                         if (retryCount < this.maxPlayRetries - 1) {
                             setTimeout(() => {
-                                this.playAudio(retryCount + 1);
+                                if (!this.socket?.connected || !isCurrentPlayback()) return;
+                                this.playAudio(retryCount + 1, playbackRequestId || this.currentAudio?.requestId);
                             }, 500 * (retryCount + 1));
                         }
                     } else {
@@ -1293,6 +1325,7 @@ function ttsApp() {
                     player.controls = true;
                     player.className = 'w-full rounded-lg';
                     player.autoplay = true;
+                    player.loop = false;
                     player.playsInline = true;
                     player.preload = 'auto';
                     document.body.appendChild(player);
@@ -1302,6 +1335,7 @@ function ttsApp() {
                     hidden.id = 'hiddenAudio';
                     hidden.className = 'hidden';
                     hidden.autoplay = true;
+                    hidden.loop = false;
                     hidden.playsInline = true;
                     hidden.preload = 'auto';
                     document.body.appendChild(hidden);
@@ -1316,6 +1350,13 @@ function ttsApp() {
         tryMutedAutoplay(audioElement, retryCount = 0) {
             if (!audioElement) return;
 
+            const playbackAudio = this.currentAudio;
+            const playbackRequestId = playbackAudio?.requestId || null;
+            const isCurrentPlayback = () => (
+                this.currentAudio === playbackAudio
+                || (playbackRequestId && this.currentAudio?.requestId === playbackRequestId)
+            );
+
             const previousMuted = audioElement.muted;
             const previousVolume = audioElement.volume;
 
@@ -1325,8 +1366,14 @@ function ttsApp() {
             const mutedPlayPromise = audioElement.play();
             if (mutedPlayPromise !== undefined) {
                 mutedPlayPromise.then(() => {
+                    if (!isCurrentPlayback()) {
+                        audioElement.muted = previousMuted;
+                        audioElement.volume = previousVolume;
+                        return;
+                    }
                     // Setelah playback dimulai dalam mode muted, aktifkan kembali suara
                     setTimeout(() => {
+                        if (!isCurrentPlayback()) return;
                         audioElement.muted = previousMuted;
                         audioElement.volume = previousVolume || 1;
                     }, 120);
@@ -1421,6 +1468,12 @@ function ttsApp() {
             this.saveAudioState();
             this.emitAudioPlaybackStatus('ended');
             this.showNotification('Audio selesai diputar', 'info');
+        },
+
+        onAudioError() {
+            this.isPlaying = false;
+            this.saveAudioState();
+            this.emitAudioPlaybackStatus('error');
         },
         
         // Download audio
@@ -1835,6 +1888,7 @@ function ttsApp() {
                     resolve({ status: 'client-timeout', schedulerRunId, schedulerItem });
                 }, 31 * 60 * 1000);
                 this.schedulerItemWaiters[key] = {
+                    schedulerRunId,
                     resolve: (data) => {
                         clearTimeout(timeout);
                         delete this.schedulerItemWaiters[key];
@@ -1853,17 +1907,55 @@ function ttsApp() {
             return true;
         },
 
+        cancelSchedulerRun(schedulerRunId, reason = 'cancelled') {
+            if (!schedulerRunId) return;
+            const state = this.schedulerRunStates[schedulerRunId];
+            if (state) {
+                state.cancelled = true;
+                (state.cancelResolvers || []).splice(0).forEach(resolve => resolve());
+            }
+            Object.entries(this.schedulerItemWaiters).forEach(([key, waiter]) => {
+                if (waiter.schedulerRunId !== schedulerRunId) return;
+                waiter.resolve({ status: reason, schedulerRunId });
+                delete this.schedulerItemWaiters[key];
+            });
+        },
+
+        cancelSchedulerRuns(reason = 'cancelled') {
+            Object.keys(this.schedulerRunStates).forEach(runId => this.cancelSchedulerRun(runId, reason));
+        },
+
+        waitForScheduleDelay(milliseconds, state) {
+            if (!milliseconds || state.cancelled) return Promise.resolve();
+            return new Promise(resolve => {
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    state.cancelResolvers = state.cancelResolvers.filter(item => item !== finish);
+                    resolve();
+                };
+                const timer = setTimeout(finish, milliseconds);
+                state.cancelResolvers.push(finish);
+            });
+        },
+
         async runSchedule(schedule) {
             this.runningScheduleIds.push(schedule.id);
             const totalPlays = this.getScheduleTotalPlays(schedule);
             this.showNotification(`Scheduler “${schedule.name}” mulai (${totalPlays} kali putar)`, 'info');
             const schedulerRunId = `run_${schedule.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const runState = { cancelled: false, cancelResolvers: [] };
+            this.schedulerRunStates[schedulerRunId] = runState;
             try {
                 for (let index = 0; index < schedule.items.length; index += 1) {
+                    if (runState.cancelled) return;
                     const item = schedule.items[index];
                     const repeatCount = Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1)));
                     const repeatIntervalMs = Math.min(3600, Math.max(0, Number(item.repeatIntervalSeconds) || 0)) * 1000;
                     for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
+                        if (runState.cancelled || !this.socket?.connected) return;
                         const schedulerItem = `${index + 1}.${repeat}`;
                         const schedulerData = {
                             priority: item.priority || 'normal',
@@ -1886,17 +1978,19 @@ function ttsApp() {
                             duration: item.audioDuration !== null && Number.isFinite(Number(item.audioDuration)) ? Number(item.audioDuration) : null,
                             format: item.audioFormat || 'audio/mpeg'
                         });
-                        await playbackFinished;
+                        const playbackResult = await playbackFinished;
+                        if (runState.cancelled || playbackResult?.status !== 'ended') return;
                         if (repeat < repeatCount && repeatIntervalMs > 0) {
-                            await new Promise(resolve => setTimeout(resolve, repeatIntervalMs));
+                            await this.waitForScheduleDelay(repeatIntervalMs, runState);
                         }
                     }
                     if (index < schedule.items.length - 1) {
-                        await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000));
+                        await this.waitForScheduleDelay(Math.max(0, Number(schedule.itemIntervalSeconds) || 0) * 1000, runState);
                     }
                 }
                 this.showNotification(`Scheduler “${schedule.name}” selesai`, 'success');
             } finally {
+                delete this.schedulerRunStates[schedulerRunId];
                 this.runningScheduleIds = this.runningScheduleIds.filter(id => id !== schedule.id);
             }
         },
