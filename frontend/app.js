@@ -301,9 +301,7 @@ function ttsApp() {
             }
             
             // Create new connection
-            const socketToken = localStorage.getItem('ttsSocketToken') || '';
             this.socket = io({
-                auth: socketToken ? { token: socketToken } : {},
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,

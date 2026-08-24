@@ -7,7 +7,11 @@ const crypto = require('crypto');
 const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
+const { fromBuffer: detectFileType } = require('file-type');
+const { parseBuffer: parseAudioMetadata } = require('music-metadata');
 const googleTTSService = require('./services/googleTTSService');
+const { getRequestToken, hasAudioSignature, safeTokenEquals } = require('./lib/security');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,9 +20,16 @@ const MAX_TTS_TEXT_LENGTH = 5000;
 const MAX_QUEUE_LENGTH = parseInt(process.env.MAX_QUEUE_LENGTH, 10) || 100;
 const MAX_UPLOAD_AUDIO_SIZE_MB = parseInt(process.env.MAX_UPLOAD_AUDIO_SIZE_MB, 10) || 20;
 const MAX_UPLOAD_AUDIO_SIZE = MAX_UPLOAD_AUDIO_SIZE_MB * 1024 * 1024;
+const MAX_UPLOAD_STORAGE_MB = parseInt(process.env.MAX_UPLOAD_STORAGE_MB, 10) || 500;
+const MAX_UPLOAD_STORAGE_SIZE = MAX_UPLOAD_STORAGE_MB * 1024 * 1024;
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const SOCKET_AUTH_TOKEN = process.env.SOCKET_AUTH_TOKEN || '';
+const CLIENT_SESSION_COOKIE = 'tts_session';
+const CLIENT_SESSION_TTL_SECONDS = parseInt(process.env.CLIENT_SESSION_TTL_SECONDS, 10) || 86400;
+const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === 'true'
+  || (process.env.SESSION_COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
+const clientSessions = new Map();
 const defaultAllowedOrigins = [
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
@@ -42,7 +53,162 @@ const supportedAudioTypes = new Map([
   ['audio/x-flac', '.flac']
 ]);
 
+const supportedAudioExtensions = new Map([
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav'],
+  ['.ogg', 'audio/ogg'],
+  ['.webm', 'audio/webm'],
+  ['.m4a', 'audio/mp4'],
+  ['.mp4', 'audio/mp4'],
+  ['.aac', 'audio/aac'],
+  ['.flac', 'audio/flac']
+]);
+
+const audioSignatureTypes = [
+  'audio/aac',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+  'audio/webm',
+  'audio/mp4',
+  'audio/flac'
+];
+
+const uploadRateLimiter = new RateLimiterMemory({
+  keyPrefix: 'audio-upload',
+  points: parseInt(process.env.UPLOAD_RATE_LIMIT, 10) || 30,
+  duration: parseInt(process.env.UPLOAD_RATE_WINDOW, 10) || 60
+});
+
+const limitAudioUploads = async (req, res, next) => {
+  try {
+    await uploadRateLimiter.consume(req.ip || req.socket.remoteAddress || 'unknown');
+    next();
+  } catch (rateLimit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((rateLimit.msBeforeNext || 1000) / 1000));
+    res.set('Retry-After', String(retryAfterSeconds));
+    sendApiError(res, 429, 'Terlalu banyak upload audio. Coba lagi beberapa saat.', {
+      retryAfterSeconds
+    });
+  }
+};
+
+const parseCookies = (cookieHeader = '') => cookieHeader.split(';').reduce((cookies, pair) => {
+  const separator = pair.indexOf('=');
+  if (separator === -1) return cookies;
+
+  const name = pair.slice(0, separator).trim();
+  const value = pair.slice(separator + 1).trim();
+  if (name) cookies[name] = value;
+  return cookies;
+}, {});
+
+const getClientSession = (sessionId) => {
+  if (!sessionId) return null;
+
+  const session = clientSessions.get(sessionId);
+  if (!session) return null;
+
+  if (Date.now() - session.lastSeenAt > CLIENT_SESSION_TTL_SECONDS * 1000) {
+    clientSessions.delete(sessionId);
+    return null;
+  }
+
+  session.lastSeenAt = Date.now();
+  return session;
+};
+
+const getClientSessionFromCookieHeader = (cookieHeader) => {
+  const sessionId = parseCookies(cookieHeader || '')[CLIENT_SESSION_COOKIE];
+  return getClientSession(sessionId);
+};
+
+const createClientSession = () => {
+  const sessionId = crypto.randomBytes(32).toString('base64url');
+  const session = { id: sessionId, createdAt: Date.now(), lastSeenAt: Date.now() };
+  clientSessions.set(sessionId, session);
+  return session;
+};
+
+const setClientSessionCookie = (res, sessionId) => {
+  const attributes = [
+    `${CLIENT_SESSION_COOKIE}=${sessionId}`,
+    'Path=/',
+    `Max-Age=${CLIENT_SESSION_TTL_SECONDS}`,
+    'HttpOnly',
+    'SameSite=Lax'
+  ];
+  if (SESSION_COOKIE_SECURE) attributes.push('Secure');
+  res.append('Set-Cookie', attributes.join('; '));
+};
+
+const ensureClientSession = (req, res, next) => {
+  const existingSession = getClientSessionFromCookieHeader(req.get('cookie'));
+  if (existingSession) {
+    req.clientSession = existingSession;
+    return next();
+  }
+
+  // API clients must present a session (or the legacy shared token); create sessions for browsers only.
+  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io')) return next();
+
+  const session = createClientSession();
+  req.clientSession = session;
+  setClientSessionCookie(res, session.id);
+  return next();
+};
+
+const requireClientSession = (req, res, next) => {
+  if (req.clientSession) return next();
+
+  // Keep the shared token as a temporary migration fallback for older clients.
+  if (SOCKET_AUTH_TOKEN && safeTokenEquals(getRequestToken(req), SOCKET_AUTH_TOKEN)) return next();
+
+  return sendApiError(res, 401, 'Session client tidak valid atau sudah kedaluwarsa');
+};
+
+const detectAudioSignatureType = (buffer) => (
+  audioSignatureTypes.find((contentType) => hasAudioSignature(buffer, contentType)) || null
+);
+
+const inspectAudioUpload = async (buffer) => {
+  const detectedFile = await detectFileType(buffer);
+  const extension = detectedFile?.ext ? `.${detectedFile.ext.toLowerCase()}` : '';
+  const contentType = supportedAudioExtensions.get(extension);
+
+  if (!contentType || !hasAudioSignature(buffer, contentType)) {
+    throw new Error('Isi file tidak dikenali sebagai format audio yang didukung');
+  }
+
+  const metadata = await parseAudioMetadata(buffer, detectedFile.mime, {
+    duration: false,
+    skipCovers: true
+  });
+  const channelCount = Number(metadata.format.numberOfChannels);
+  const sampleRate = Number(metadata.format.sampleRate);
+
+  if (!metadata.format.codec || !Number.isFinite(channelCount) || channelCount < 1
+    || !Number.isFinite(sampleRate) || sampleRate < 1) {
+    throw new Error('File tidak memiliki stream audio yang valid');
+  }
+
+  return {
+    extension: contentType === 'audio/mp4' ? '.m4a' : extension,
+    contentType
+  };
+};
+
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+let uploadStorageSize = fs.readdirSync(UPLOAD_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .reduce((total, entry) => {
+    try {
+      return total + fs.statSync(path.join(UPLOAD_DIR, entry.name)).size;
+    } catch (error) {
+      return total;
+    }
+  }, 0);
 
 const isAllowedOrigin = (origin) => {
   if (!origin) {
@@ -73,9 +239,18 @@ const io = socketIo(server, {
 // Middleware
 app.use(morgan(process.env.LOG_LEVEL || 'dev'));
 app.use(cors(corsOptions));
+app.use(ensureClientSession);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../frontend')));
+
+const sessionCleanupTimer = setInterval(() => {
+  const cutoff = Date.now() - CLIENT_SESSION_TTL_SECONDS * 1000;
+  clientSessions.forEach((session, sessionId) => {
+    if (session.lastSeenAt <= cutoff) clientSessions.delete(sessionId);
+  });
+}, 5 * 60 * 1000);
+sessionCleanupTimer.unref?.();
 
 // Store connected clients and their info
 const connectedClients = new Map();
@@ -155,12 +330,13 @@ const requireAdminToken = (req, res, next) => {
 };
 
 const isSocketAuthorized = (socket) => {
-  if (!SOCKET_AUTH_TOKEN) {
-    return true;
-  }
+  if (getClientSessionFromCookieHeader(socket.handshake.headers.cookie)) return true;
 
-  return socket.handshake.auth?.token === SOCKET_AUTH_TOKEN
-    || socket.handshake.headers['x-socket-token'] === SOCKET_AUTH_TOKEN;
+  // Keep the shared token as a temporary migration fallback for older clients.
+  return Boolean(SOCKET_AUTH_TOKEN) && (
+    safeTokenEquals(socket.handshake.auth?.token, SOCKET_AUTH_TOKEN)
+    || safeTokenEquals(socket.handshake.headers['x-socket-token'], SOCKET_AUTH_TOKEN)
+  );
 };
 
 const normalizeSpeed = (speed) => {
@@ -298,7 +474,28 @@ const getUploadedAudio = (audioUrl) => {
     return null;
   }
 
-  return { filename, filePath, audioUrl: `/api/audio/files/${filename}` };
+  // Existing uploads may have a wrong extension, so validate their bytes and serve the real type.
+  let fileDescriptor;
+  let contentType;
+  try {
+    const header = Buffer.alloc(32);
+    fileDescriptor = fs.openSync(filePath, 'r');
+    const bytesRead = fs.readSync(fileDescriptor, header, 0, header.length, 0);
+    contentType = detectAudioSignatureType(header.subarray(0, bytesRead));
+    if (!contentType) return null;
+  } catch (error) {
+    return null;
+  } finally {
+    if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
+  }
+
+  return {
+    filename,
+    filePath,
+    audioUrl: `/api/audio/files/${filename}`,
+    contentType,
+    size: fs.statSync(filePath).size
+  };
 };
 
 const emitUploadedAudioToMasters = (request) => {
@@ -313,10 +510,10 @@ const emitUploadedAudioToMasters = (request) => {
     duration: request.duration !== null && request.duration !== undefined && Number.isFinite(Number(request.duration))
       ? Number(request.duration)
       : null,
-    format: request.format || 'audio/mpeg',
+    format: uploadedAudio.contentType,
     sourceType: request.sourceType === 'voice-note' ? 'voice-note' : 'upload',
     fileName: String(request.fileName || (request.sourceType === 'voice-note' ? 'Voice note' : 'Audio upload')).slice(0, 160),
-    audioSize: Number(request.audioSize) || null
+    audioSize: uploadedAudio.size
   }, request);
 };
 
@@ -1098,38 +1295,64 @@ setInterval(() => {
 }, 60 * 1000); // Check every minute
 
 // API Routes
-app.post('/api/audio/upload', express.raw({ type: () => true, limit: MAX_UPLOAD_AUDIO_SIZE }), async (req, res) => {
-  const contentType = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
-  const extension = supportedAudioTypes.get(contentType);
+app.post(
+  '/api/audio/upload',
+  requireClientSession,
+  limitAudioUploads,
+  express.raw({ type: () => true, limit: MAX_UPLOAD_AUDIO_SIZE }),
+  async (req, res) => {
+    const requestedContentType = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
 
-  if (!extension) {
-    return sendApiError(res, 415, 'Format audio tidak didukung. Gunakan MP3, WAV, OGG, WebM, M4A, AAC, atau FLAC.');
+    if (!supportedAudioTypes.has(requestedContentType)) {
+      return sendApiError(res, 415, 'Format audio tidak didukung. Gunakan MP3, WAV, OGG, WebM, M4A, AAC, atau FLAC.');
+    }
+
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return sendApiError(res, 400, 'File audio kosong');
+    }
+
+    let inspectedAudio;
+    try {
+      inspectedAudio = await inspectAudioUpload(req.body);
+    } catch (error) {
+      logInfo(`Rejected audio upload from ${req.ip || 'unknown'}: ${error.message}`);
+      return sendApiError(res, 400, 'File audio tidak valid atau tidak memiliki stream audio yang dapat diputar');
+    }
+
+    if (uploadStorageSize + req.body.length > MAX_UPLOAD_STORAGE_SIZE) {
+      return sendApiError(res, 507, `Penyimpanan audio penuh. Batas total ${MAX_UPLOAD_STORAGE_MB} MB.`);
+    }
+
+    const filename = `audio_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${inspectedAudio.extension}`;
+    const filePath = path.join(UPLOAD_DIR, filename);
+    uploadStorageSize += req.body.length;
+    try {
+      await fs.promises.writeFile(filePath, req.body, { flag: 'wx' });
+    } catch (error) {
+      uploadStorageSize -= req.body.length;
+      throw error;
+    }
+
+    let originalName = 'Audio upload';
+    try {
+      originalName = path.basename(decodeURIComponent(req.get('x-audio-name') || originalName))
+        .replace(/[\u0000-\u001f\u007f]/g, '')
+        .trim()
+        .slice(0, 160) || 'Audio upload';
+    } catch (error) {
+      originalName = 'Audio upload';
+    }
+
+    return res.status(201).json({
+      success: true,
+      audioUrl: `/api/audio/files/${filename}`,
+      fileName: originalName,
+      size: req.body.length,
+      format: inspectedAudio.contentType,
+      maxSizeMb: MAX_UPLOAD_AUDIO_SIZE_MB
+    });
   }
-
-  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-    return sendApiError(res, 400, 'File audio kosong');
-  }
-
-  const filename = `audio_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${extension}`;
-  const filePath = path.join(UPLOAD_DIR, filename);
-  await fs.promises.writeFile(filePath, req.body, { flag: 'wx' });
-
-  let originalName = 'Audio upload';
-  try {
-    originalName = decodeURIComponent(req.get('x-audio-name') || originalName).slice(0, 160);
-  } catch (error) {
-    originalName = 'Audio upload';
-  }
-
-  return res.status(201).json({
-    success: true,
-    audioUrl: `/api/audio/files/${filename}`,
-    fileName: originalName,
-    size: req.body.length,
-    format: contentType,
-    maxSizeMb: MAX_UPLOAD_AUDIO_SIZE_MB
-  });
-});
+);
 
 app.get('/api/audio/files/:filename', (req, res) => {
   const uploadedAudio = getUploadedAudio(`/api/audio/files/${req.params.filename}`);
@@ -1139,6 +1362,7 @@ app.get('/api/audio/files/:filename', (req, res) => {
 
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Cache-Control', 'public, max-age=86400');
+  res.type(uploadedAudio.contentType);
   return res.sendFile(uploadedAudio.filePath);
 });
 

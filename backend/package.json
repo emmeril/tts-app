@@ -15,7 +15,9 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "file-type": "16.5.4",
     "morgan": "^1.10.1",
+    "music-metadata": "7.14.0",
     "rate-limiter-flexible": "^9.0.1",
     "socket.io": "^4.8.3"
   }
