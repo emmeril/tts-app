@@ -12,6 +12,7 @@ const { fromBuffer: detectFileType } = require('file-type');
 const { parseBuffer: parseAudioMetadata } = require('music-metadata');
 const googleTTSService = require('./services/googleTTSService');
 const { getRequestToken, hasAudioSignature, safeTokenEquals } = require('./lib/security');
+const SchedulerPlaybackTracker = require('./lib/schedulerPlaybackTracker');
 
 const app = express();
 const server = http.createServer(app);
@@ -231,7 +232,7 @@ const corsOptions = {
 };
 
 const io = socketIo(server, {
-  pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT, 10) || 5000,
+  pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT, 10) || 20000,
   pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL, 10) || 25000,
   cors: corsOptions
 });
@@ -256,7 +257,6 @@ sessionCleanupTimer.unref?.();
 const connectedClients = new Map();
 let masterClients = new Set(); // Multiple masters
 let masterRequestQueue = [];
-const pendingSchedulerPlaybacks = new Map();
 
 // Track previous masters for reconnection
 const previousMasters = new Map(); // clientId -> { wantsToBeMaster: true, lastSeen: Date }
@@ -393,14 +393,10 @@ const promotePreviousMasterRecord = (currentClientId, previousClientId) => {
   previousMasters.delete(previousClientId);
 };
 
-const completeSchedulerPlayback = (requestId, status = 'ended', masterSocketId = null) => {
-  const pending = pendingSchedulerPlaybacks.get(requestId);
-  if (!pending) return false;
+const schedulerPlaybackTracker = new SchedulerPlaybackTracker({
+  onComplete(requestId, pending, status, masterSocketId) {
+    if (!pending.fromClientSocketId || !connectedClients.has(pending.fromClientSocketId)) return;
 
-  clearTimeout(pending.timeout);
-  pendingSchedulerPlaybacks.delete(requestId);
-
-  if (pending.fromClientSocketId && connectedClients.has(pending.fromClientSocketId)) {
     io.to(pending.fromClientSocketId).emit('scheduler-item-finished', {
       success: status === 'ended',
       status,
@@ -409,25 +405,10 @@ const completeSchedulerPlayback = (requestId, status = 'ended', masterSocketId =
       ...getSchedulerContext(pending)
     });
   }
-  return true;
-};
+});
 
 const trackSchedulerPlayback = (requestId, result, request) => {
-  if (!request.schedulerRunId || !request.fromClientSocketId) return;
-
-  const durationSeconds = Number(result.duration);
-  const timeoutMs = Math.min(
-    30 * 60 * 1000,
-    Math.max(30 * 1000, (Number.isFinite(durationSeconds) ? durationSeconds * 1000 : 0) + 30 * 1000)
-  );
-  const pending = {
-    fromClientSocketId: request.fromClientSocketId,
-    masterSocketIds: new Set(masterClients),
-    ...getSchedulerContext(request),
-    timeout: null
-  };
-  pending.timeout = setTimeout(() => completeSchedulerPlayback(requestId, 'timeout'), timeoutMs);
-  pendingSchedulerPlaybacks.set(requestId, pending);
+  schedulerPlaybackTracker.track(requestId, result, request, new Set(masterClients));
 };
 
 const emitTtsAudioToMasters = (result, request) => {
@@ -841,6 +822,7 @@ io.on('connection', (socket) => {
     if (masterClients.has(socket.id)) {
       // Remove from masters
       masterClients.delete(socket.id);
+      schedulerPlaybackTracker.masterDisconnected(socket.id);
       client.isMaster = false;
       
       // Update preference if specified
@@ -1165,7 +1147,7 @@ io.on('connection', (socket) => {
       && requestId
       && ['ended', 'stopped', 'interrupted', 'error', 'master-disconnected'].includes(playbackStatus)
     ) {
-      completeSchedulerPlayback(requestId, playbackStatus, socket.id);
+      schedulerPlaybackTracker.recordStatus(requestId, playbackStatus, socket.id);
     }
 
     io.emit('client-audio-status', {
@@ -1195,12 +1177,7 @@ io.on('connection', (socket) => {
     const client = connectedClients.get(socket.id);
     logInfo(`Client disconnected: ${client?.id || socket.id}, reason=${reason}`);
 
-    pendingSchedulerPlaybacks.forEach((pending, requestId) => {
-      if (pending.fromClientSocketId === socket.id) {
-        clearTimeout(pending.timeout);
-        pendingSchedulerPlaybacks.delete(requestId);
-      }
-    });
+    schedulerPlaybackTracker.cancelBySource(socket.id);
     
     // Save master preference for reconnection
     if (client && client.wantsToBeMaster) {
@@ -1216,15 +1193,7 @@ io.on('connection', (socket) => {
     if (masterClients.has(socket.id)) {
       const wasMaster = true;
       masterClients.delete(socket.id);
-
-      // Finish scheduler items that no longer have any master able to play them.
-      pendingSchedulerPlaybacks.forEach((pending, requestId) => {
-        if (!pending.masterSocketIds) return;
-        pending.masterSocketIds.delete(socket.id);
-        if (pending.masterSocketIds.size === 0) {
-          completeSchedulerPlayback(requestId, 'master-disconnected', socket.id);
-        }
-      });
+      schedulerPlaybackTracker.masterDisconnected(socket.id);
       
       io.emit('master-disconnected', {
         disconnectedMasterId: client?.id,
@@ -1281,6 +1250,7 @@ setInterval(() => {
       
       if (masterClients.has(socketId)) {
         masterClients.delete(socketId);
+        schedulerPlaybackTracker.masterDisconnected(socketId);
         io.emit('master-inactive', {
           inactiveClientId: client.id,
           timestamp: now.toISOString(),
@@ -1485,6 +1455,7 @@ app.post('/api/remove-master', requireAdminToken, (req, res) => {
   // Remove from masters if exists
   if (masterClients.has(targetClient.socketId)) {
     masterClients.delete(targetClient.socketId);
+    schedulerPlaybackTracker.masterDisconnected(targetClient.socketId);
     targetClient.client.isMaster = false;
     
     // Update previous masters tracking
