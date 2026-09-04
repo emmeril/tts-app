@@ -16,6 +16,7 @@ function ttsApp() {
         maxReconnectAttempts: 3,
         wasMasterBeforeDisconnect: false,
         savedClientId: null,
+        reconnectStatusTimer: null,
         
         // Multi-Master State
         masterClients: [], // Daftar semua master
@@ -105,11 +106,17 @@ function ttsApp() {
             this.setupAudioAutoplayBootstrap();
 
             if (!this.intervalsInitialized) {
-                // Auto-reconnect jika terputus
-                setInterval(() => {
-                    if (!this.socket || !this.socket.connected) {
-                        this.serverStatus = 'disconnected';
-                        this.serverStatusText = 'Mencoba menyambung ulang...';
+                // Socket.IO handles reconnects itself. This is only a safety
+                // net for a socket explicitly closed by the server.
+                this.reconnectStatusTimer = setInterval(() => {
+                    if (!this.socket || this.socket.connected) return;
+
+                    this.serverStatus = 'disconnected';
+                    this.serverStatusText = this.socket.active
+                        ? 'Mencoba menyambung ulang...'
+                        : 'Mencoba menyambung kembali...';
+
+                    if (!this.socket.active) {
                         this.initSocket();
                     }
                 }, 5000);
@@ -288,30 +295,35 @@ function ttsApp() {
         
         // Initialize Socket.io connection
         initSocket() {
-            // Close existing connection
+            // Do not replace a socket that is already reconnecting. Replacing
+            // it interrupts Socket.IO's backoff and creates a reconnect loop.
             if (this.socket) {
-                this.socket.disconnect();
+                if (!this.socket.connected && !this.socket.active) {
+                    this.socket.connect();
+                }
+                return this.socket;
             }
-            
-            // Get reconnection flag from URL or localStorage
-            const reconnected = localStorage.getItem('ttsReconnecting') === 'true';
-            if (reconnected) {
-                this.wasMasterBeforeDisconnect = localStorage.getItem('ttsWasMaster') === 'true';
-                // console.log('Reconnecting, was master before:', this.wasMasterBeforeDisconnect);
-            }
-            
+
             // Create new connection
             this.socket = io({
                 reconnection: true,
-                reconnectionAttempts: 5,
+                // Keep retrying until the server is available again.
+                reconnectionAttempts: Infinity,
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
                 timeout: 20000,
-                forceNew: true
+                randomizationFactor: 0.5,
+                forceNew: false
             });
             
             // Socket event listeners
             this.socket.on('connect', () => {
+                const reconnected = localStorage.getItem('ttsReconnecting') === 'true';
+                if (reconnected) {
+                    this.wasMasterBeforeDisconnect = this.wasMasterBeforeDisconnect
+                        || localStorage.getItem('ttsWasMaster') === 'true';
+                }
+
                 this.serverStatus = 'connected';
                 this.serverStatusText = 'Terhubung ke server';
                 this.reconnectAttempts = 0;
@@ -777,9 +789,11 @@ function ttsApp() {
             
             this.socket.on('connect_error', (error) => {
                 console.error('Connection error:', error);
-                this.serverStatus = 'error';
-                this.serverStatusText = 'Gagal menyambung ke server';
-                this.showNotification(`Koneksi gagal: ${error.message}`, 'error');
+                // A failed attempt is transient while Socket.IO is backing
+                // off; keep the UI in reconnecting state instead of showing
+                // an error notification for every retry.
+                this.serverStatus = 'disconnected';
+                this.serverStatusText = 'Mencoba menyambung ulang...';
             });
             
             this.socket.on('error', (error) => {
