@@ -8,9 +8,9 @@ const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
-const { fromBuffer: detectFileType } = require('file-type');
 const { parseBuffer: parseAudioMetadata } = require('music-metadata');
 const googleTTSService = require('./services/googleTTSService');
+const { detectFileType } = require('./lib/fileType');
 const { getRequestToken, hasAudioSignature, safeTokenEquals } = require('./lib/security');
 const SchedulerPlaybackTracker = require('./lib/schedulerPlaybackTracker');
 
