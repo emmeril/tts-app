@@ -35,10 +35,11 @@ class SchedulerPlaybackTracker {
   recordStatus(requestId, status, masterSocketId) {
     const pending = this.pending.get(requestId);
     if (!pending || !pending.remainingMasterSocketIds.has(masterSocketId)) return false;
+    // One healthy master finishing is enough to advance the scheduler. Waiting
+    // for every browser can deadlock when another master blocks autoplay.
     if (status !== 'ended') return this.complete(requestId, status, masterSocketId);
     pending.remainingMasterSocketIds.delete(masterSocketId);
-    if (pending.remainingMasterSocketIds.size === 0) return this.complete(requestId, 'ended', masterSocketId);
-    return true;
+    return this.complete(requestId, 'ended', masterSocketId);
   }
 
   masterDisconnected(masterSocketId) {

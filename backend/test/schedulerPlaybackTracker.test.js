@@ -20,16 +20,15 @@ const schedulerRequest = {
   fromClientSocketId: 'source-1'
 };
 
-test('waits for every master that received the scheduler item', () => {
+test('advances after the first master finishes the scheduler item', () => {
   const { tracker, completions } = createTracker();
   tracker.track('request-1', { duration: 1 }, schedulerRequest, new Set(['master-1', 'master-2']));
 
   assert.equal(tracker.recordStatus('request-1', 'ended', 'master-1'), true);
-  assert.equal(completions.length, 0);
-
-  assert.equal(tracker.recordStatus('request-1', 'ended', 'master-2'), true);
   assert.equal(completions.length, 1);
   assert.equal(completions[0].status, 'ended');
+
+  assert.equal(tracker.recordStatus('request-1', 'ended', 'master-2'), false);
 });
 
 test('does not add a newly connected master to an active scheduler item', () => {

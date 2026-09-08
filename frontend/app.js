@@ -44,6 +44,8 @@ function ttsApp() {
         showSchedulerModal: false,
         schedulerDraft: null,
         schedulerTimer: null,
+        schedulerOwnerId: null,
+        schedulerLocksKey: 'ttsSchedulerRunLocks',
         runningScheduleIds: [],
         schedulerItemWaiters: {},
         schedulerRunStates: {},
@@ -95,6 +97,7 @@ function ttsApp() {
         
         // Initialize
         init() {
+            this.schedulerOwnerId = `scheduler_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
             this.updateCharCount();
             this.loadLanguages();
             this.loadHistory();
@@ -708,9 +711,11 @@ function ttsApp() {
 
             this.socket.on('scheduler-item-finished', (data) => {
                 this.resolveScheduleItemWaiter(data);
-                if (data.status && data.status !== 'ended') {
+                if (data.status && !['ended', 'timeout', 'interrupted', 'error'].includes(data.status)) {
                     this.showNotification(`Pemutaran audio item ${data.schedulerItem || ''} berhenti (${data.status}); scheduler dibatalkan`, 'warning');
                     this.cancelSchedulerRun(data.schedulerRunId, data.status);
+                } else if (data.status && data.status !== 'ended') {
+                    this.showNotification(`Audio item ${data.schedulerItem || ''} berstatus ${data.status}; scheduler dilanjutkan`, 'warning');
                 }
             });
 
@@ -1401,6 +1406,7 @@ function ttsApp() {
                     audioElement.muted = previousMuted;
                     audioElement.volume = previousVolume || 1;
                     this.pendingAutoplayAudio = true;
+                    this.emitAudioPlaybackStatus('error', playbackAudio);
 
                     this.showNotification(
                         'Browser memblokir autoplay awal. Audio akan diputar setelah interaksi pertama di halaman.',
@@ -1882,10 +1888,46 @@ function ttsApp() {
                 if (!occurrence) return;
                 const occurrenceKey = occurrence.toISOString();
                 if (schedule.lastRunAt === occurrenceKey) return;
+                if (!this.claimScheduleOccurrence(schedule.id, occurrenceKey)) return;
                 schedule.lastRunAt = occurrenceKey;
                 this.persistSchedules();
                 this.runSchedule(schedule);
             });
+        },
+
+        claimScheduleOccurrence(scheduleId, occurrenceKey) {
+            if (!scheduleId || !occurrenceKey || !this.schedulerOwnerId) return false;
+            const now = Date.now();
+            let locks = {};
+            try {
+                locks = JSON.parse(localStorage.getItem(this.schedulerLocksKey) || '{}');
+            } catch (error) {
+                locks = {};
+            }
+
+            const existing = locks[scheduleId];
+            if (
+                existing
+                && existing.occurrenceKey === occurrenceKey
+                && Number(existing.expiresAt) > now
+                && existing.ownerId !== this.schedulerOwnerId
+            ) {
+                return false;
+            }
+
+            // Keep the claim beyond the active minute so another tab cannot
+            // replay the same occurrence after its own stale localStorage load.
+            locks[scheduleId] = {
+                ownerId: this.schedulerOwnerId,
+                occurrenceKey,
+                expiresAt: now + (10 * 60 * 1000)
+            };
+            try {
+                localStorage.setItem(this.schedulerLocksKey, JSON.stringify(locks));
+            } catch (error) {
+                console.warn('Unable to persist scheduler run lock:', error);
+            }
+            return true;
         },
 
         getScheduleWaiterKey(schedulerRunId, schedulerItem) {
@@ -1991,7 +2033,8 @@ function ttsApp() {
                             format: item.audioFormat || 'audio/mpeg'
                         });
                         const playbackResult = await playbackFinished;
-                        if (runState.cancelled || playbackResult?.status !== 'ended') return;
+                        if (runState.cancelled) return;
+                        if (!['ended', 'timeout', 'interrupted', 'error'].includes(playbackResult?.status)) return;
                         if (repeat < repeatCount && repeatIntervalMs > 0) {
                             await this.waitForScheduleDelay(repeatIntervalMs, runState);
                         }
