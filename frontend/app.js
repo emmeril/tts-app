@@ -84,6 +84,13 @@ function ttsApp() {
         showHelpModal: false,
         showMasterPreferenceModal: false,
         showMasterListModal: false,
+        showMasterPasswordModal: false,
+        masterPassword: '',
+        masterPasswordConfirmation: '',
+        masterPasswordConfigured: false,
+        masterPasswordMinLength: 6,
+        masterPasswordError: '',
+        pendingMasterRoleAutoReconnect: false,
         
         // Audio Control
         playRetryCount: 0,
@@ -102,6 +109,7 @@ function ttsApp() {
             this.loadLanguages();
             this.loadHistory();
             this.loadMasterPreference();
+            this.loadMasterPasswordSession();
             this.loadAudioState();
             this.loadSchedules();
             this.startScheduler();
@@ -277,6 +285,7 @@ function ttsApp() {
                 );
                 
                 if (data.success && data.exists) {
+                    this.masterPasswordConfigured = Boolean(data.masterPasswordConfigured);
                     if (data.isMaster && !this.isMaster) {
                         // Server says we're master but local state doesn't match
                         // console.log('Syncing master status: server says we are master');
@@ -343,7 +352,8 @@ function ttsApp() {
                     wantsToBeMaster: this.wantsToBeMaster,
                     reconnected: reconnected,
                     wasMaster: this.wasMasterBeforeDisconnect,
-                    savedClientId: this.savedClientId
+                    savedClientId: this.savedClientId,
+                    masterPassword: this.masterPassword || undefined
                 });
                 
                 // Show notification
@@ -370,6 +380,7 @@ function ttsApp() {
                 this.clientId = data.clientId;
                 this.clientIdShort = data.clientId.substring(0, 8);
                 this.saveClientId();
+                this.masterPasswordConfigured = Boolean(data.masterPasswordConfigured);
                 
                 this.showNotification('Terhubung ke server TTS Multi-Master', 'success');
                 
@@ -390,6 +401,7 @@ function ttsApp() {
                 this.isMaster = data.isMaster;
                 this.masterClients = data.masterList || [];
                 this.connectedClients = data.connectedClients || [];
+                this.masterPasswordConfigured = Boolean(data.masterPasswordConfigured);
                 
                 // Update wasMaster state if we are master
                 if (this.isMaster) {
@@ -475,6 +487,8 @@ function ttsApp() {
             this.socket.on('master-role-granted', (data) => {
                 this.isMaster = true;
                 this.isRequestingMaster = false;
+                this.showMasterPasswordModal = false;
+                this.masterPasswordError = '';
                 this.wantsToBeMaster = true;
                 this.wasMasterBeforeDisconnect = true;
                 this.saveMasterPreference();
@@ -498,11 +512,44 @@ function ttsApp() {
             
             this.socket.on('master-role-denied', (data) => {
                 this.isRequestingMaster = false;
-                this.showNotification(`Gagal menjadi Master: ${this.getEventErrorMessage(data, 'Permintaan ditolak')}`, 'error');
+                const errorMessage = this.getEventErrorMessage(data, 'Permintaan ditolak');
+                if (data?.requiresPassword) {
+                    this.masterPassword = '';
+                    this.masterPasswordConfirmation = '';
+                    sessionStorage.removeItem('ttsMasterPassword');
+                    this.masterPasswordConfigured = true;
+                    this.masterPasswordError = errorMessage;
+                    this.showMasterPasswordModal = true;
+                }
+                this.showNotification(`Gagal menjadi Master: ${errorMessage}`, 'error');
                 
                 if (this.wantsToBeMaster) {
                     this.saveMasterPreference();
                 }
+            });
+
+            this.socket.on('master-password-required', (data) => {
+                this.isRequestingMaster = false;
+                this.masterPasswordConfigured = Boolean(data?.configured);
+                this.masterPasswordMinLength = Number(data?.minLength) || 6;
+                this.masterPasswordError = '';
+                this.showMasterPasswordModal = true;
+            });
+
+            this.socket.on('master-password-set', (data) => {
+                this.masterPasswordConfigured = true;
+                this.masterPasswordError = '';
+                sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+                this.showNotification(data.message || 'Password Master berhasil disimpan', 'success');
+                this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
+            });
+
+            this.socket.on('master-password-error', (data) => {
+                this.isRequestingMaster = false;
+                this.masterPasswordConfigured = Boolean(data?.configured || this.masterPasswordConfigured);
+                this.masterPasswordMinLength = Number(data?.minLength) || this.masterPasswordMinLength;
+                this.masterPasswordError = this.getEventErrorMessage(data, 'Gagal menyimpan password Master');
+                this.showMasterPasswordModal = true;
             });
 
             this.socket.on('master-role-duplicate', (data) => {
@@ -907,10 +954,55 @@ function ttsApp() {
             localStorage.removeItem('ttsAudioState');
         },
         
+        loadMasterPasswordSession() {
+            this.masterPassword = sessionStorage.getItem('ttsMasterPassword') || '';
+        },
+
+        openMasterPasswordModal(autoReconnect = false) {
+            this.pendingMasterRoleAutoReconnect = autoReconnect;
+            this.masterPasswordError = '';
+            this.masterPasswordConfirmation = '';
+            this.showMasterPasswordModal = true;
+        },
+
+        submitMasterPassword() {
+            if (!this.socket || !this.socket.connected) {
+                this.masterPasswordError = 'Server belum terhubung';
+                return;
+            }
+            if (!this.masterPassword || this.masterPassword.length < this.masterPasswordMinLength) {
+                this.masterPasswordError = `Password minimal ${this.masterPasswordMinLength} karakter`;
+                return;
+            }
+
+            this.masterPasswordError = '';
+            if (!this.masterPasswordConfigured) {
+                if (this.masterPassword !== this.masterPasswordConfirmation) {
+                    this.masterPasswordError = 'Konfirmasi password tidak cocok';
+                    return;
+                }
+                this.isRequestingMaster = true;
+                this.socket.emit('set-master-password', {
+                    password: this.masterPassword,
+                    confirmation: this.masterPasswordConfirmation
+                });
+                return;
+            }
+
+            sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+            this.showMasterPasswordModal = false;
+            this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
+        },
+
         // Request master role
         requestMasterRole(autoReconnect = false) {
             if (this.isMaster || !this.socket || !this.socket.connected) return;
-            
+
+            if (!this.masterPassword) {
+                this.openMasterPasswordModal(autoReconnect);
+                return;
+            }
+
             this.isRequestingMaster = true;
             this.wantsToBeMaster = true;
             this.wasMasterBeforeDisconnect = true;
@@ -921,7 +1013,8 @@ function ttsApp() {
                 clientId: this.clientId,
                 wantsToBeMaster: true,
                 autoReconnect: autoReconnect,
-                wasMaster: this.wasMasterBeforeDisconnect
+                wasMaster: this.wasMasterBeforeDisconnect,
+                password: this.masterPassword
             });
             
             if (autoReconnect) {

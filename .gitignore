@@ -1,5 +1,6 @@
 backend/node_modules
 backend/.env
+backend/.master-password.json
 backend/pnpm-lock.yaml
 backend/uploads/*
 !backend/uploads/.gitkeep

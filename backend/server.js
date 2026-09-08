@@ -28,9 +28,39 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const SOCKET_AUTH_TOKEN = process.env.SOCKET_AUTH_TOKEN || '';
 const CLIENT_SESSION_COOKIE = 'tts_session';
 const CLIENT_SESSION_TTL_SECONDS = parseInt(process.env.CLIENT_SESSION_TTL_SECONDS, 10) || 86400;
+const MASTER_PASSWORD_MIN_LENGTH = parseInt(process.env.MASTER_PASSWORD_MIN_LENGTH, 10) || 6;
+const MASTER_PASSWORD_FILE = path.join(__dirname, '.master-password.json');
 const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === 'true'
   || (process.env.SESSION_COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
 const clientSessions = new Map();
+// The first Master must configure this password. Only a salted scrypt hash is kept.
+const hashMasterPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => {
+  const derivedKey = crypto.scryptSync(password, salt, 64);
+  return `${salt}:${derivedKey.toString('hex')}`;
+};
+
+const verifyMasterPassword = (password, encodedHash) => {
+  if (typeof password !== 'string' || !encodedHash) return false;
+  const separator = encodedHash.indexOf(':');
+  if (separator <= 0) return false;
+  const salt = encodedHash.slice(0, separator);
+  const expected = Buffer.from(encodedHash.slice(separator + 1), 'hex');
+  const actual = crypto.scryptSync(password, salt, expected.length);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+};
+
+const loadPersistedMasterPassword = () => {
+  try {
+    const persisted = JSON.parse(fs.readFileSync(MASTER_PASSWORD_FILE, 'utf8'));
+    return typeof persisted.masterPasswordHash === 'string' ? persisted.masterPasswordHash : null;
+  } catch (error) {
+    return null;
+  }
+};
+
+let masterPasswordHash = process.env.MASTER_PASSWORD
+  ? hashMasterPassword(process.env.MASTER_PASSWORD)
+  : loadPersistedMasterPassword();
 const defaultAllowedOrigins = [
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
@@ -588,6 +618,7 @@ io.on('connection', (socket) => {
     lastActivity: new Date(),
     clientInfo: {},
     wantsToBeMaster: false,
+    masterAuthenticated: false,
     reconnected: false,
     previousClientId: null
   });
@@ -598,7 +629,8 @@ io.on('connection', (socket) => {
     serverTime: new Date().toISOString(),
     message: 'Terhubung ke TTS Multi-Master Server',
     totalClients: connectedClients.size,
-    totalMasters: masterClients.size
+    totalMasters: masterClients.size,
+    masterPasswordConfigured: Boolean(masterPasswordHash)
   });
   
   // Send current connection status
@@ -607,6 +639,7 @@ io.on('connection', (socket) => {
     isMaster: masterClients.has(socket.id),
     totalClients: connectedClients.size,
     totalMasters: masterClients.size,
+    masterPasswordConfigured: Boolean(masterPasswordHash),
     masterList: Array.from(masterClients).map(sid => ({
       id: connectedClients.get(sid)?.id,
       socketId: sid
@@ -634,11 +667,19 @@ io.on('connection', (socket) => {
   }
   
   // Handle client info update with master preference
-  socket.on('client-info', (info) => {
+  socket.on('client-info', (info = {}) => {
+    if (!info || typeof info !== 'object') info = {};
     const client = connectedClients.get(socket.id);
     if (client) {
-      client.clientInfo = { ...client.clientInfo, ...info };
+      const { masterPassword: _masterPassword, ...safeClientInfo } = info || {};
+      client.clientInfo = { ...client.clientInfo, ...safeClientInfo };
       client.lastActivity = new Date();
+
+      // A reconnect may re-authenticate the existing master session without
+      // granting a role to a client that has not supplied the password.
+      if (info.masterPassword && verifyMasterPassword(info.masterPassword, masterPasswordHash)) {
+        client.masterAuthenticated = true;
+      }
       
       // Store previous client ID for reconnection
       if (info.savedClientId) {
@@ -660,7 +701,7 @@ io.on('connection', (socket) => {
       }
       
       // Check if reconnecting client wants to be master and was master
-      if (toBoolean(info.reconnected) && client.wantsToBeMaster) {
+      if (toBoolean(info.reconnected) && client.wantsToBeMaster && client.masterAuthenticated) {
         logInfo(`Reconnect request from ${client.id}: wantsMaster=${client.wantsToBeMaster}, wasMaster=${toBoolean(info.wasMaster)}`);
         
         if (toBoolean(info.wasMaster)) {
@@ -753,6 +794,49 @@ io.on('connection', (socket) => {
     }
   });
   
+  // Configure the shared Master password once, before any client can claim
+  // the Master role. The password itself never leaves this process.
+  socket.on('set-master-password', (data = {}) => {
+    const client = connectedClients.get(socket.id);
+    const password = typeof data.password === 'string' ? data.password : '';
+    const confirmation = typeof data.confirmation === 'string' ? data.confirmation : password;
+
+    if (!client) {
+      emitSocketError(socket, 'master-password-error', 'Client tidak terdaftar atau koneksi sudah tidak aktif');
+      return;
+    }
+    if (masterPasswordHash) {
+      emitSocketError(socket, 'master-password-error', 'Password Master sudah dikonfigurasi. Masukkan password untuk melanjutkan.', {
+        configured: true
+      });
+      return;
+    }
+    if (password.length < MASTER_PASSWORD_MIN_LENGTH) {
+      emitSocketError(socket, 'master-password-error', `Password Master minimal ${MASTER_PASSWORD_MIN_LENGTH} karakter`, {
+        minLength: MASTER_PASSWORD_MIN_LENGTH
+      });
+      return;
+    }
+    if (password !== confirmation) {
+      emitSocketError(socket, 'master-password-error', 'Konfirmasi password tidak cocok');
+      return;
+    }
+
+    masterPasswordHash = hashMasterPassword(password);
+    try {
+      fs.writeFileSync(MASTER_PASSWORD_FILE, JSON.stringify({ masterPasswordHash }), { encoding: 'utf8', mode: 0o600 });
+    } catch (error) {
+      // Keep the in-memory password usable even if the host disallows writes.
+      logError('Failed to persist Master password hash', error.message);
+    }
+    client.masterAuthenticated = true;
+    socket.emit('master-password-set', {
+      success: true,
+      configured: true,
+      message: 'Password Master berhasil disimpan. Silakan menjadi Master Controller.'
+    });
+  });
+
   // Handle request to become master
   socket.on('request-master-role', async (data = {}) => {
     const client = connectedClients.get(socket.id);
@@ -763,6 +847,27 @@ io.on('connection', (socket) => {
         reason: 'Client tidak terdaftar atau koneksi sudah tidak aktif'
       });
       return;
+    }
+
+    if (!masterPasswordHash) {
+      emitSocketError(socket, 'master-password-required', 'Password Master belum diset. Atur password terlebih dahulu.', {
+        configured: false,
+        requiresSetup: true,
+        minLength: MASTER_PASSWORD_MIN_LENGTH
+      });
+      return;
+    }
+
+    if (!client.masterAuthenticated) {
+      if (!verifyMasterPassword(data.password, masterPasswordHash)) {
+        emitSocketError(socket, 'master-role-denied', 'Password Master salah atau belum diisi', {
+          reason: 'Password Master salah atau belum diisi',
+          requiresPassword: true,
+          configured: true
+        });
+        return;
+      }
+      client.masterAuthenticated = true;
     }
     
     // Update client preference
@@ -1397,6 +1502,7 @@ app.post('/api/add-master', requireAdminToken, (req, res) => {
   if (!masterClients.has(targetClient.socketId)) {
     masterClients.add(targetClient.socketId);
     targetClient.client.isMaster = true;
+    targetClient.client.masterAuthenticated = true;
     targetClient.client.wantsToBeMaster = true;
     
     // Track for reconnection
@@ -1631,6 +1737,7 @@ app.get('/api/client-status/:clientId', (req, res) => {
     socketId: targetClient?.socketId || null,
     exists: Boolean(targetClient),
     totalMasters: masterClients.size,
+    masterPasswordConfigured: Boolean(masterPasswordHash),
     previousMasterData: previousMasters.get(clientId) || null
   });
 });
