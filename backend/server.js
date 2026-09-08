@@ -177,6 +177,9 @@ const ensureClientSession = (req, res, next) => {
   const existingSession = getClientSessionFromCookieHeader(req.get('cookie'));
   if (existingSession) {
     req.clientSession = existingSession;
+    // Keep active browser sessions alive with a sliding cookie window. The
+    // server session already refreshes lastSeenAt when it is read.
+    setClientSessionCookie(res, existingSession.id);
     return next();
   }
 

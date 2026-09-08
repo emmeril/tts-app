@@ -516,7 +516,7 @@ function ttsApp() {
                 if (data?.requiresPassword) {
                     this.masterPassword = '';
                     this.masterPasswordConfirmation = '';
-                    sessionStorage.removeItem('ttsMasterPassword');
+                    this.clearMasterPasswordSession();
                     this.masterPasswordConfigured = true;
                     this.masterPasswordError = errorMessage;
                     this.showMasterPasswordModal = true;
@@ -539,7 +539,7 @@ function ttsApp() {
             this.socket.on('master-password-set', (data) => {
                 this.masterPasswordConfigured = true;
                 this.masterPasswordError = '';
-                sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+                this.saveMasterPasswordSession();
                 this.showNotification(data.message || 'Password Master berhasil disimpan', 'success');
                 this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
             });
@@ -554,7 +554,7 @@ function ttsApp() {
                 // page was already open. Treat this as a login flow instead
                 // of requiring the user to submit the same password twice.
                 if (data?.configured && this.masterPassword) {
-                    sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+                    this.saveMasterPasswordSession();
                     this.showMasterPasswordModal = false;
                     this.masterPasswordError = '';
                     this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
@@ -924,9 +924,35 @@ function ttsApp() {
         clearMasterPreference() {
             localStorage.removeItem('ttsMasterPreference');
             localStorage.removeItem('ttsWasMaster');
+            this.clearMasterPasswordSession();
             this.wantsToBeMaster = false;
             this.autoRequestMaster = true;
             this.wasMasterBeforeDisconnect = false;
+        },
+
+        // Keep the Master credential across browser restarts so an opted-in
+        // Master can reclaim the role automatically after reconnecting.
+        saveMasterPasswordSession() {
+            if (!this.masterPassword) return;
+            localStorage.setItem('ttsMasterPassword', this.masterPassword);
+            sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+        },
+
+        loadMasterPasswordSession() {
+            const persistentPassword = localStorage.getItem('ttsMasterPassword');
+            const sessionPassword = sessionStorage.getItem('ttsMasterPassword');
+            this.masterPassword = persistentPassword || sessionPassword || '';
+
+            // Migrate credentials saved by older builds without prompting.
+            if (!persistentPassword && sessionPassword) {
+                localStorage.setItem('ttsMasterPassword', sessionPassword);
+            }
+        },
+
+        clearMasterPasswordSession() {
+            localStorage.removeItem('ttsMasterPassword');
+            sessionStorage.removeItem('ttsMasterPassword');
+            this.masterPassword = '';
         },
         
         // Save audio state to localStorage
@@ -965,10 +991,6 @@ function ttsApp() {
             localStorage.removeItem('ttsAudioState');
         },
         
-        loadMasterPasswordSession() {
-            this.masterPassword = sessionStorage.getItem('ttsMasterPassword') || '';
-        },
-
         openMasterPasswordModal(autoReconnect = false) {
             this.pendingMasterRoleAutoReconnect = autoReconnect;
             this.masterPasswordError = '';
@@ -1004,7 +1026,7 @@ function ttsApp() {
                 return;
             }
 
-            sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+            this.saveMasterPasswordSession();
             this.showMasterPasswordModal = false;
             this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
         },
