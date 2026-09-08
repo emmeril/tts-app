@@ -549,6 +549,17 @@ function ttsApp() {
                 this.masterPasswordConfigured = Boolean(data?.configured || this.masterPasswordConfigured);
                 this.masterPasswordMinLength = Number(data?.minLength) || this.masterPasswordMinLength;
                 this.masterPasswordError = this.getEventErrorMessage(data, 'Gagal menyimpan password Master');
+
+                // Another client may have configured the password while this
+                // page was already open. Treat this as a login flow instead
+                // of requiring the user to submit the same password twice.
+                if (data?.configured && this.masterPassword) {
+                    sessionStorage.setItem('ttsMasterPassword', this.masterPassword);
+                    this.showMasterPasswordModal = false;
+                    this.masterPasswordError = '';
+                    this.requestMasterRole(this.pendingMasterRoleAutoReconnect);
+                    return;
+                }
                 this.showMasterPasswordModal = true;
             });
 
