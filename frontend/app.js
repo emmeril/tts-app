@@ -981,7 +981,11 @@ function ttsApp() {
                 this.masterPasswordError = 'Server belum terhubung';
                 return;
             }
-            if (!this.masterPassword || this.masterPassword.length < this.masterPasswordMinLength) {
+            if (!this.masterPassword) {
+                this.masterPasswordError = 'Password Master wajib diisi';
+                return;
+            }
+            if (!this.masterPasswordConfigured && this.masterPassword.length < this.masterPasswordMinLength) {
                 this.masterPasswordError = `Password minimal ${this.masterPasswordMinLength} karakter`;
                 return;
             }

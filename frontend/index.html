@@ -1313,13 +1313,16 @@
 
                 <label class="block text-sm font-medium text-gray-700">
                     Password Master
-                    <input x-model="masterPassword" type="password" :minlength="masterPasswordMinLength" autocomplete="new-password" required
+                    <input x-model="masterPassword" type="password"
+                           :minlength="masterPasswordConfigured ? null : masterPasswordMinLength"
+                           :autocomplete="masterPasswordConfigured ? 'current-password' : 'new-password'" required
                            class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
-                           :placeholder="`Minimal ${masterPasswordMinLength} karakter`">
+                           :placeholder="masterPasswordConfigured ? 'Masukkan password Master' : `Minimal ${masterPasswordMinLength} karakter`">
                 </label>
                 <label x-show="!masterPasswordConfigured" class="block text-sm font-medium text-gray-700">
                     Konfirmasi Password
-                    <input x-model="masterPasswordConfirmation" type="password" :minlength="masterPasswordMinLength" autocomplete="new-password" required
+                    <input x-model="masterPasswordConfirmation" type="password" :minlength="masterPasswordMinLength"
+                           autocomplete="new-password" :required="!masterPasswordConfigured" :disabled="masterPasswordConfigured"
                            class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
                            placeholder="Ulangi password">
                 </label>
