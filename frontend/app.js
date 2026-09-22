@@ -105,6 +105,7 @@ function ttsApp() {
         // Initialize
         init() {
             this.schedulerOwnerId = `scheduler_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+            this.$watch('isMaster', isMaster => this.handleSchedulerMasterRoleChange(isMaster));
             this.updateCharCount();
             this.loadLanguages();
             this.loadHistory();
@@ -1674,6 +1675,14 @@ function ttsApp() {
         },
 
         // ==================== Scheduler ====================
+        requireSchedulerMaster() {
+            if (this.isMaster) return true;
+            this.showSchedulerModal = false;
+            this.schedulerDraft = null;
+            this.showNotification('Scheduler Alarm hanya tersedia untuk Master Controller', 'warning');
+            return false;
+        },
+
         newScheduleItem() {
             return {
                 type: 'audio',
@@ -1690,11 +1699,13 @@ function ttsApp() {
         },
 
         openScheduler() {
+            if (!this.requireSchedulerMaster()) return;
             this.schedulerDraft = null;
             this.showSchedulerModal = true;
         },
 
         createSchedule() {
+            if (!this.requireSchedulerMaster()) return;
             this.schedulerDraft = {
                 id: null,
                 name: `Jadwal ${this.schedules.length + 1}`,
@@ -1709,6 +1720,7 @@ function ttsApp() {
         },
 
         editSchedule(schedule) {
+            if (!this.requireSchedulerMaster()) return;
             this.schedulerDraft = JSON.parse(JSON.stringify(schedule));
             const normalizedDays = this.normalizeScheduleDays(this.schedulerDraft.days);
             this.schedulerDraft.days = normalizedDays;
@@ -1831,6 +1843,7 @@ function ttsApp() {
         },
 
         async uploadScheduleAudio(event, item) {
+            if (!this.requireSchedulerMaster()) return;
             const input = event?.target;
             const file = input?.files?.[0];
             if (!file || !item) return;
@@ -1893,6 +1906,7 @@ function ttsApp() {
         },
 
         saveSchedule() {
+            if (!this.requireSchedulerMaster()) return;
             const draft = this.schedulerDraft;
             if (!draft) return;
             const time = String(draft.time || '').match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
@@ -1941,12 +1955,14 @@ function ttsApp() {
         },
 
         deleteSchedule(schedule) {
+            if (!this.requireSchedulerMaster()) return;
             if (!schedule || !confirm(`Hapus scheduler “${schedule.name}”?`)) return;
             this.schedules = this.schedules.filter(item => item.id !== schedule.id);
             this.persistSchedules();
         },
 
         toggleSchedule(schedule) {
+            if (!this.requireSchedulerMaster()) return;
             schedule.enabled = !schedule.enabled;
             this.persistSchedules();
         },
@@ -1987,6 +2003,7 @@ function ttsApp() {
 
         startScheduler() {
             this.stopScheduler();
+            if (!this.isMaster) return;
             this.checkSchedules();
             this.schedulerTimer = setInterval(() => this.checkSchedules(), 1000);
         },
@@ -1994,6 +2011,27 @@ function ttsApp() {
         stopScheduler() {
             if (this.schedulerTimer) clearInterval(this.schedulerTimer);
             this.schedulerTimer = null;
+        },
+
+        handleSchedulerMasterRoleChange(isMaster) {
+            if (isMaster) {
+                this.startScheduler();
+                return;
+            }
+
+            this.stopScheduler();
+            this.cancelSchedulerRuns('master-role-lost');
+            this.showSchedulerModal = false;
+            this.schedulerDraft = null;
+
+            if (this.currentAudio?.schedulerRunId) {
+                const audioElement = document.getElementById('masterAudioPlayer');
+                if (audioElement) {
+                    audioElement.pause();
+                    audioElement.currentTime = 0;
+                }
+                this.isPlaying = false;
+            }
         },
 
         getScheduleOccurrence(schedule, now = new Date()) {
@@ -2008,6 +2046,7 @@ function ttsApp() {
         },
 
         checkSchedules() {
+            if (!this.isMaster) return;
             if (!this.schedules.length) return;
             // Alarm hanya ditandai berjalan setelah koneksi tersedia.
             if (!this.socket || !this.socket.connected) return;
@@ -2126,6 +2165,7 @@ function ttsApp() {
         },
 
         async runSchedule(schedule) {
+            if (!this.isMaster) return;
             this.runningScheduleIds.push(schedule.id);
             const totalPlays = this.getScheduleTotalPlays(schedule);
             this.showNotification(`Scheduler “${schedule.name}” mulai (${totalPlays} kali putar)`, 'info');
@@ -2139,7 +2179,7 @@ function ttsApp() {
                     const repeatCount = Math.min(100, Math.max(1, Math.round(Number(item.repeatCount) || 1)));
                     const repeatIntervalMs = Math.min(3600, Math.max(0, Number(item.repeatIntervalSeconds) || 0)) * 1000;
                     for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
-                        if (runState.cancelled || !this.socket?.connected) return;
+                        if (runState.cancelled || !this.isMaster || !this.socket?.connected) return;
                         const schedulerItem = `${index + 1}.${repeat}`;
                         const schedulerData = {
                             priority: item.priority || 'normal',

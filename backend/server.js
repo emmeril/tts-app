@@ -13,6 +13,7 @@ const googleTTSService = require('./services/googleTTSService');
 const { detectFileType } = require('./lib/fileType');
 const { getRequestToken, hasAudioSignature, safeTokenEquals } = require('./lib/security');
 const SchedulerPlaybackTracker = require('./lib/schedulerPlaybackTracker');
+const getMasterAudioTargets = require('./lib/masterAudioTargets');
 
 const app = express();
 const server = http.createServer(app);
@@ -310,6 +311,10 @@ const getSchedulerContext = (data = {}) => ({
   schedulerRunId: data.schedulerRunId || null
 });
 
+const isSchedulerRequest = (data = {}) => Boolean(
+  data.schedulerId || data.schedulerRunId || data.schedulerItem
+);
+
 const logInfo = (message) => {
   console.log(`[${new Date().toISOString()}] ${message}`);
 };
@@ -440,15 +445,18 @@ const schedulerPlaybackTracker = new SchedulerPlaybackTracker({
   }
 });
 
-const trackSchedulerPlayback = (requestId, result, request) => {
-  schedulerPlaybackTracker.track(requestId, result, request, new Set(masterClients));
+const trackSchedulerPlayback = (requestId, result, request, targetMasterSocketIds) => {
+  schedulerPlaybackTracker.track(requestId, result, request, new Set(targetMasterSocketIds));
 };
 
-const emitTtsAudioToMasters = (result, request) => {
+const emitTtsAudioToMasterTargets = (result, request, targetMasterSocketIds = masterClients) => {
+  const activeTargetMasterSocketIds = new Set(
+    Array.from(targetMasterSocketIds).filter(masterSocketId => masterClients.has(masterSocketId))
+  );
   const requestId = generateRequestId();
-  trackSchedulerPlayback(requestId, result, request);
+  trackSchedulerPlayback(requestId, result, request, activeTargetMasterSocketIds);
 
-  masterClients.forEach((masterSocketId) => {
+  activeTargetMasterSocketIds.forEach((masterSocketId) => {
     io.to(masterSocketId).emit('tts-audio', {
       ...result,
       fromClientId: request.fromClientId,
@@ -458,11 +466,14 @@ const emitTtsAudioToMasters = (result, request) => {
       requestId,
       ...getSchedulerContext(request),
       forMasterOnly: true,
-      masterCount: masterClients.size
+      masterCount: activeTargetMasterSocketIds.size
     });
   });
 
-  return requestId;
+  return {
+    requestId,
+    masterCount: activeTargetMasterSocketIds.size
+  };
 };
 
 const getUploadedAudio = (audioUrl) => {
@@ -512,13 +523,13 @@ const getUploadedAudio = (audioUrl) => {
   };
 };
 
-const emitUploadedAudioToMasters = (request) => {
+const emitUploadedAudioToMasterTargets = (request, targetMasterSocketIds = masterClients) => {
   const uploadedAudio = getUploadedAudio(request.audioUrl);
   if (!uploadedAudio) {
     throw new Error('File audio upload tidak ditemukan');
   }
 
-  emitTtsAudioToMasters({
+  return emitTtsAudioToMasterTargets({
     success: true,
     audioUrl: uploadedAudio.audioUrl,
     duration: request.duration !== null && request.duration !== undefined && Number.isFinite(Number(request.duration))
@@ -528,7 +539,7 @@ const emitUploadedAudioToMasters = (request) => {
     sourceType: request.sourceType === 'voice-note' ? 'voice-note' : 'upload',
     fileName: String(request.fileName || (request.sourceType === 'voice-note' ? 'Voice note' : 'Audio upload')).slice(0, 160),
     audioSize: uploadedAudio.size
-  }, request);
+  }, request, targetMasterSocketIds);
 };
 
 const processQueuedMasterRequests = async () => {
@@ -542,7 +553,7 @@ const processQueuedMasterRequests = async () => {
   for (const request of queuedRequests) {
     try {
       if (request.kind === 'audio') {
-        emitUploadedAudioToMasters(request);
+        emitUploadedAudioToMasterTargets(request);
 
         if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
           io.to(request.fromClientSocketId).emit('audio-complete', {
@@ -566,7 +577,7 @@ const processQueuedMasterRequests = async () => {
         speed: normalizeSpeed(request.speed)
       });
 
-      emitTtsAudioToMasters(result, request);
+      emitTtsAudioToMasterTargets(result, request);
 
       if (request.fromClientSocketId && connectedClients.has(request.fromClientSocketId)) {
         io.to(request.fromClientSocketId).emit('tts-complete', {
@@ -980,7 +991,7 @@ io.on('connection', (socket) => {
     });
   });
   
-  // Handle TTS request from clients (HANYA KE SEMUA MASTER)
+  // TTS biasa dikirim ke semua Master; request scheduler kembali ke Master pemiliknya.
   socket.on('tts-request', async (data = {}) => {
     const client = connectedClients.get(socket.id);
     const { text, language = 'id-ID', speed = 1.0, priority = 'normal' } = data;
@@ -990,6 +1001,15 @@ io.on('connection', (socket) => {
     try {
       if (!client) {
         emitSocketError(socket, 'tts-error', 'Client tidak valid atau koneksi sudah berakhir');
+        return;
+      }
+
+      const schedulerRequest = isSchedulerRequest(data);
+      if (schedulerRequest && !masterClients.has(socket.id)) {
+        emitSocketError(socket, 'tts-error', 'Scheduler hanya dapat dijalankan oleh Master pemilik jadwal', {
+          reason: 'Client pemilik scheduler bukan Master aktif',
+          ...getSchedulerContext(data)
+        });
         return;
       }
 
@@ -1070,18 +1090,20 @@ io.on('connection', (socket) => {
         speed: normalizeSpeed(speed)
       });
       
-      // Kirim ke semua master dengan satu request ID agar status playback dapat dilacak.
-      emitTtsAudioToMasters(result, {
+      const targetMasterSocketIds = getMasterAudioTargets(masterClients, socket.id, schedulerRequest);
+      const delivery = emitTtsAudioToMasterTargets(result, {
         ...data,
         fromClientId: client.id,
         fromClientSocketId: socket.id,
         priority
-      });
+      }, targetMasterSocketIds);
       
       socket.emit('tts-complete', {
         success: true,
-        message: `Audio telah dikirim ke ${masterClients.size} Master Controller`,
-        masterCount: masterClients.size,
+        message: schedulerRequest
+          ? 'Audio scheduler diputar pada Master pemilik jadwal'
+          : `Audio telah dikirim ke ${delivery.masterCount} Master Controller`,
+        masterCount: delivery.masterCount,
         textLength: text.length,
         language: language,
         duration: result.duration,
@@ -1091,13 +1113,15 @@ io.on('connection', (socket) => {
         schedulerRunId: data.schedulerRunId || null
       });
       
-      // Notify all clients about new TTS (except sender)
-      socket.broadcast.emit('tts-notification', {
-        fromClientId: client.id,
-        textPreview: text.length > 50 ? text.substring(0, 50) + '...' : text,
-        language: language,
-        timestamp: new Date().toISOString()
-      });
+      if (!schedulerRequest) {
+        // Notify all clients about new TTS (except sender)
+        socket.broadcast.emit('tts-notification', {
+          fromClientId: client.id,
+          textPreview: text.length > 50 ? text.substring(0, 50) + '...' : text,
+          language: language,
+          timestamp: new Date().toISOString()
+        });
+      }
       
     } catch (error) {
       logError(`TTS error for ${client?.id || socket.id}`, error.message);
@@ -1139,8 +1163,18 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const schedulerRequest = isSchedulerRequest(data);
       const sourceType = data.sourceType === 'voice-note' ? 'voice-note' : 'upload';
       const sourceLabel = sourceType === 'voice-note' ? 'Voice note' : 'Audio upload';
+
+      if (schedulerRequest && !masterClients.has(socket.id)) {
+        emitSocketError(socket, 'audio-error', 'Scheduler hanya dapat dijalankan oleh Master pemilik jadwal', {
+          reason: 'Client pemilik scheduler bukan Master aktif',
+          sourceType,
+          ...getSchedulerContext(data)
+        });
+        return;
+      }
 
       const uploadedAudio = getUploadedAudio(data.audioUrl);
       if (!uploadedAudio) {
@@ -1196,11 +1230,14 @@ io.on('connection', (socket) => {
         return;
       }
 
-      emitUploadedAudioToMasters(request);
+      const targetMasterSocketIds = getMasterAudioTargets(masterClients, socket.id, schedulerRequest);
+      const delivery = emitUploadedAudioToMasterTargets(request, targetMasterSocketIds);
       socket.emit('audio-complete', {
         success: true,
-        message: `${sourceLabel} telah dikirim ke ${masterClients.size} Master Controller`,
-        masterCount: masterClients.size,
+        message: schedulerRequest
+          ? 'Audio scheduler diputar pada Master pemilik jadwal'
+          : `${sourceLabel} telah dikirim ke ${delivery.masterCount} Master Controller`,
+        masterCount: delivery.masterCount,
         sourceType,
         schedulerId: data.schedulerId || null,
         schedulerName: data.schedulerName || null,
@@ -1807,8 +1844,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`\nFrontend tersedia di: ${serverUrl}`);
   console.log('\nFitur: Multi-Master TTS');
   console.log(' - Multiple master dapat aktif bersamaan');
-  console.log(' - Client selalu kirim ke semua master');
-  console.log(' - Tidak ada broadcast atau spesifik master');
+  console.log(' - Permintaan client biasa dikirim ke semua master');
+  console.log(' - Scheduler alarm hanya diputar pada master pemilik jadwal');
   console.log(' - Master preference disimpan di localStorage');
   console.log(' - Auto-reconnect saat browser di-refresh');
   console.log(' - Master tetap stabil setelah refresh');
