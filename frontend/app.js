@@ -1641,20 +1641,27 @@ function ttsApp() {
         },
         
         // Share audio info
-        shareAudio() {
+        async shareAudio() {
             if (!this.currentAudio) return;
             
             const shareText = `TTS dari ${this.currentAudio.fromClientId || 'unknown'}: ${this.text.substring(0, 50)}...`;
-            
-            if (navigator.share) {
-                navigator.share({
-                    title: 'Hasil Konversi TTS',
-                    text: shareText,
-                    url: window.location.href
-                });
-            } else {
-                navigator.clipboard.writeText(shareText);
-                this.showNotification('Teks berhasil disalin ke clipboard', 'success');
+
+            try {
+                if (navigator.share) {
+                    await navigator.share({
+                        title: 'Hasil Konversi TTS',
+                        text: shareText,
+                        url: window.location.href
+                    });
+                    this.showNotification('Informasi audio berhasil dibagikan', 'success');
+                } else {
+                    await navigator.clipboard.writeText(shareText);
+                    this.showNotification('Informasi audio disalin ke clipboard', 'success');
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    this.showNotification('Audio tidak dapat dibagikan', 'error');
+                }
             }
         },
         
@@ -2241,6 +2248,34 @@ function ttsApp() {
         removeNotification(id) {
             this.notifications = this.notifications.filter(n => n.id !== id);
         },
+
+        focusDialog(container) {
+            this.$nextTick(() => {
+                const firstControl = container?.querySelector(
+                    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href]'
+                );
+                firstControl?.focus();
+            });
+        },
+
+        trapDialogFocus(event, container) {
+            const controls = Array.from(container?.querySelectorAll(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href]'
+            ) || []).filter(control => control.offsetParent !== null);
+
+            if (!controls.length) return;
+
+            const firstControl = controls[0];
+            const lastControl = controls[controls.length - 1];
+
+            if (event.shiftKey && document.activeElement === firstControl) {
+                event.preventDefault();
+                lastControl.focus();
+            } else if (!event.shiftKey && document.activeElement === lastControl) {
+                event.preventDefault();
+                firstControl.focus();
+            }
+        },
         
         // Get notification icon
         getNotificationIcon(type) {
@@ -2424,9 +2459,9 @@ function ttsApp() {
         async testConnection() {
             try {
                 const data = await this.fetchJsonOrThrow('/api/test', 'Gagal menguji koneksi');
-                alert(data.message || 'Koneksi berhasil diuji');
+                this.showNotification(data.message || 'Koneksi berhasil diuji', 'success');
             } catch (error) {
-                alert('Gagal menguji koneksi: ' + error.message);
+                this.showNotification('Gagal menguji koneksi: ' + error.message, 'error');
             }
         },
         
