@@ -73,6 +73,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+.history-list:focus-visible,
 label.file-button:focus-within,
 .upload-zone:focus-within {
     outline: 3px solid var(--focus);
@@ -890,6 +891,11 @@ audio {
 
 .history-list {
     display: grid;
+    max-height: 420px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-inline-end: 6px;
 }
 
 .history-row {
@@ -1354,6 +1360,10 @@ audio {
 }
 
 @media (max-width: 580px) {
+    .history-list {
+        max-height: 360px;
+    }
+
     .header-inner {
         min-height: 62px;
     }
